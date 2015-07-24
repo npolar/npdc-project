@@ -8,12 +8,14 @@
         <meta name="viewport" content="width=device-width, initial-scale=1">
 
         <!--node_modules _-->
-        <script src="node_modules/angular/angular.js"></script>
-        <script src="node_modules/angular-route/angular-route.js"></script>
+     <!--   <script src="node_modules/angular/angular.js"></script>  -->
+
+      <!--  <script src="node_modules/angular-route/angular-route.js"></script>  -->
+
 
         <!_project files -->
-        <script src="src/controller.js"></script>
-
+     <!--   <script src="src/controller.js"></script>  -->
+        <script src="bundle.js"></script>
 
 
    </head>
@@ -23,7 +25,7 @@
         <![endif]-->
 
       <!-- Browserify testing -->
-      <script src="bundle.js"></script>
+
         <p>This is a test.</p>
 
 
@@ -31,6 +33,18 @@
 
 
         {{ all }}
+
+        </div>
+
+        <div ng-controller="SaveCtrl as myArr">
+            Tester nr
+        <table>
+         <tr ng-repeat="x in all2">
+           <td><input type="text" name="fname" value='{{ x }}'><a href="">Delete</a></td>
+         </tr>
+
+        </table>
+
 
         </div>
 

@@ -21,7 +21,6 @@
   },
   "homepage": "https://github.com/npolar/project",
   "devDependencies": {
-    "browserify": "^11.0.0",
     "gulp": "^3.9.0",
     "gulp-concat": "^2.6.0",
     "gulp-jshint": "^1.11.2",
@@ -30,6 +29,10 @@
     "gulp-uglify": "^1.2.0"
   },
   "dependencies": {
-    "gulp": "^3.9.0"
+    "browserify": "^11.0.0",
+    "file": "^0.2.2",
+    "formula": "0.0.2-beta2",
+    "system": "^1.0.4",
+    "underscore": "^1.8.3"
   }
 }
