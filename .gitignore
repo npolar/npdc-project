@@ -1,2 +1,3 @@
-# Include your project-specific ignores in this file
-# Read about how to use .gitignore: https://help.github.com/articles/ignoring-files
+# The files that are not transferred to github
+node_modules
+dest

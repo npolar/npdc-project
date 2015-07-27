@@ -2,7 +2,7 @@
   "name": "project",
   "version": "1.0.0",
   "description": "Project UI for Norwegian Polar Institute",
-  "main": "index.js",
+  "main": "gulpfile.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -14,25 +14,25 @@
     "project",
     "NPI"
   ],
-  "author": "Siri Uldal",
-  "license": "ISC",
+  "author": "npolar",
+  "license": "MIT",
   "bugs": {
     "url": "https://github.com/npolar/project/issues"
   },
   "homepage": "https://github.com/npolar/project",
   "devDependencies": {
     "gulp": "^3.9.0",
-    "gulp-concat": "^2.6.0",
-    "gulp-jshint": "^1.11.2",
-    "gulp-load-plugins": "^1.0.0-rc.1",
-    "gulp-shell": "^0.4.2",
-    "gulp-uglify": "^1.2.0"
+    "gulp-debug": "^2.0.1",
+    "should": "^7.0.2",
+    "npdc-gulp": "git://github.com/npolar/npdc-gulp.git"
   },
   "dependencies": {
-    "browserify": "^11.0.0",
-    "file": "^0.2.2",
-    "formula": "0.0.2-beta2",
-    "system": "^1.0.4",
-    "underscore": "^1.8.3"
+    "angular": "^1.4.3",
+    "angular-npolar": "git://github.com/npolar/angular-npolar.git",
+    "angular-route": "^1.4.3",
+    "formula": "git://github.com/npolar/formula.git",
+    "lodash": "^3.10.0",
+    "tv4": "^1.1.12",
+    "npdc-common": "git://github.com/npolar/npdc-common.git"
   }
 }
