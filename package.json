@@ -1,5 +1,5 @@
 {
-  "name": "project",
+  "name": "npdc-project",
   "version": "1.0.0",
   "description": "Project UI for Norwegian Polar Institute",
   "main": "gulpfile.js",

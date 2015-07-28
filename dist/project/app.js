@@ -1,3 +1,9532 @@
+(function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
+/**
+ * npolarApiConfig, meant to be .run and merged with overrides for the current environment
+ *
+ * angular.module('myApp').run(function(npolarApiConfig, $http) {
+ *   $http.get('/npolar/config.json').success(function(config) {
+ *
+ *   var environment = config.environment || npolarApiConfig.environment;
+ *   angular.extend(npolarApiConfig, _.find(config.config, { environment: environment}));
+ *   console.log('npolarApiConfig', npolarApiConfig);
+ *
+ * }).error(function(response) {
+ *   console.log('npolarApiConfig', npolarApiConfig);
+ * });
+ *
+ * });
+ *
+ */
+'use strict';
+
+var config = {
+  environment: 'production',
+  lang: 'en',
+  base: '//api.npolar.no',
+  security: {
+  authorization: 'jwt'
+  },
+  formula: {}
+};
+
+module.exports = config;
+
+},{}],2:[function(require,module,exports){
+/**
+* NpolarBaseController is meant to be the parent of a safe Controller,
+* ie. a controller dealing with only with presentation. See also NpolarEditController.
+*
+*
+* Usage:
+*
+* angular.module('myApp').controller('MyApiController', function($scope, $routeParams, $controller, MyModel) {
+*
+* // 1. MyApiController -> NpolarBaseController
+* $controller('NpolarBaseController', {$scope: $scope});
+*
+* // 2. Set resource for parent document operations
+* $scope.resource = MyModel;
+*
+* // 3. Set document for resource (and view)
+* MyModel.fetch($routeParams, function(document) {
+*   $scope.document = document;
+* }, function() error {
+*   $scope.error = error;
+* });
+*
+*/
+
+'use strict';
+var _ = require('lodash');
+
+/**
+ * @ngInject
+ */
+var BaseController = function($scope, $location, $route, $routeParams, $window, $controller, $http,
+  npolarApiConfig, NpolarApiSecurity, NpolarApiUser, NpolarApiResource) {
+
+  $scope.init = function() {
+    $scope.base = npolarApiConfig.base;
+    $scope.environment = npolarApiConfig.environment;
+    $scope.lang = npolarApiConfig.lang;
+    $scope.user = NpolarApiSecurity.getUser();
+  };
+
+  // back() click handler
+  $scope.back = function() {
+    $window.history.back();
+  };
+ 
+  $scope.isAuthenticated = function() {
+    return (NpolarApiSecurity.isJwtValid());
+  };
+    
+  $scope.locationBase = function() {
+    console.log($routeParams.id);
+    if ($routeParams.id === '__new') {
+      $location.path('/');
+    } else {
+      $location.path($routeParams.id);
+    }
+  };
+
+  // Show action, ie. fetch document and inject into scope
+  $scope.show = function() {
+    $scope.resource.fetch($routeParams, function(document) {
+      $scope.document = document;
+
+    }, function(error) {
+      $scope.error = NpolarApiResource.error(error);
+    });
+  };
+
+  $scope.search = function(query) {
+    $scope.resource.feed(query, function(response) {
+      $scope.feed = response.feed;
+    }, function(error) {
+      $scope.error = NpolarApiResource.error(error);
+    });
+  };
+
+  $scope.getLang = function() {
+    return $scope.lang;
+  };
+
+  $scope.setLang = function(lang) {
+    $scope.lang = lang;
+    $scope.title = $scope.getTitle(lang);
+  };
+
+  $scope.getTitle = function(lang) {
+    return _.where($scope.document.titles,
+      { lang: lang }
+    )[0].text || $scope.document.titles[0].text;
+  };
+
+  $scope.isSuccess = function(status) {
+    return (status >= 200 && status <= 299);
+  };
+
+  $scope.isError = function(status) {
+    return (status <= 99 || status >= 400);
+  };
+
+  $scope.init();
+};
+BaseController.$inject = ["$scope", "$location", "$route", "$routeParams", "$window", "$controller", "$http", "npolarApiConfig", "NpolarApiSecurity", "NpolarApiUser", "NpolarApiResource"];
+
+module.exports = BaseController;
+},{"lodash":17}],3:[function(require,module,exports){
+/**
+ * NpolarEditController provides methods for manipulating documents (using ngResource)
+ * and controller action methods like edit().
+ *
+ * The following ngResource-bound methods are defined
+ * - create()
+ * - update()
+ * - delete()
+ * - save()
+ *
+ * Usage:
+ *
+ * angular.module('myApp').controller('MyApiController', function($scope, $routeParams, $controller, MyModel) {
+ *
+ * // 1. MyApiController -> NpolarEditController
+ * $controller('NpolarBaseController', {$scope: $scope});
+ *
+ * // 2. Set resource for parent document operations
+ * $scope.resource = MyModel;
+ *
+ * // 3. Set document for resource (and view)
+ * MyModel.fetch($routeParams, function(document) {
+ *   $scope.document = document;
+ *   $scope.formula.model = document;
+ * }, function() error {
+ *   $scope.error = error;
+ * });
+ *
+ */
+
+'use strict';
+var angular = require('angular');
+
+/**
+ * @ngInject
+ */
+var EditController = function ($scope, $location, $route, $routeParams, $window, $controller,
+  npolarApiConfig, NpolarApiSecurity, NpolarApiResource) {
+
+
+  // Extend NpolarBaseController
+  $controller('NpolarBaseController', {$scope: $scope});
+
+  $scope.formula = {
+    template: npolarApiConfig.formula.template || 'formula',
+    language: null,
+    model: {},
+    onsave: function () {
+      $scope.save();
+    }
+  };
+
+  // Create action, ie. save document and reload app
+  $scope.create = function() {
+
+    $scope.resource.save($scope.document, function(data) {
+      var uri = $location.path().replace(/\/__new(\/edit)?$/, '/'+data.id+'/edit');
+
+      $scope.document = data;
+      $location.path(uri);
+      //$route.reload();
+
+    }, function(error) {
+      $scope.error = error;
+    });
+  };
+
+
+  // Edit action, ie. fetch document and edit with formula
+  $scope.editAction = function() {
+
+    $scope.resource.fetch($routeParams, function(document) {
+
+      $scope.document = document;
+      $scope.formula.model = document;
+    }, function(error) {
+      $scope.error = NpolarApiResource.error(error);
+    });
+  };
+
+  // New action, ie. create new document and edit with formula
+  $scope.newAction = function() {
+    $scope.document = new $scope.resource();
+    $scope.formula.model = $scope.document;
+  };
+
+  // Edit (or new) action
+  $scope.edit = function() {
+    if ($routeParams.id === '__new') {
+      $scope.newAction();
+    } else {
+      $scope.editAction();
+    }
+  };
+
+  // PUT document, ie resource update
+  $scope.update = function() {
+
+    $scope.resource.update($scope.document, function(data) {
+
+      $scope.document = data;
+      $scope.info = { header: 'Success', message: 'Saved document revision #'+data._rev.split('-')[0] +' at ' + new Date().toISOString() };
+
+    }, function(error) {
+      $scope.info = null;
+      $scope.error = error;
+
+    });
+
+  };
+
+  // DELETE document, ie. resource remove
+  $scope.delete = function() {
+
+  $scope.resource.remove({id: $scope.document.id }, function() {
+
+    // $scope.info = { header: 'Success', message: 'Deleted document revision #'+data._rev.split('-')[0] +' at ' + new Date().toISOString() }
+    $location.path('/');
+
+  }, function(error) {
+    $scope.error = error;
+  });
+  };
+
+  // Save document, ie. create or update
+  $scope.save = function() {
+    if (angular.isUndefined($scope.document.id)) {
+      $scope.create();
+    } else {
+      $scope.update();
+    }
+  };
+};
+EditController.$inject = ["$scope", "$location", "$route", "$routeParams", "$window", "$controller", "npolarApiConfig", "NpolarApiSecurity", "NpolarApiResource"];
+
+module.exports = EditController;
+
+},{"angular":24}],4:[function(require,module,exports){
+/**
+*
+*
+*/
+
+'use strict';
+var angular = require('angular');
+var _ = require('lodash');
+
+/**
+ * @ngInject
+ */
+var Resource = function(npolarApiConfig, NpolarApiSecurity, $resource, $location) {
+
+  this.info = function() {
+    //return { status: status, statusText: 'Npolar API error, failed accessing '+npolarApiConfig.base, data: 'Please inform data@npolar.no if this problem persists' };
+  };
+
+
+  this.base = function(service) {
+  return (angular.isString(service.base)) ? service.base : npolarApiConfig.base;
+  };
+
+  /**
+   * Generic error handler
+   *
+   *  MyResource.feed(angular.extend({ limit: 10 }, $location.search()), function(response) {
+   *    $scope.feed = response.feed;
+   *  }, function(error) {
+   *    $scope.error = NpolarApiResource.error(error);
+   *  });
+   */
+  this.error = function(error) {
+  // response: {data: null, status: 0, headers: function, config: Object, statusText: ''}
+  if (error.status >= 400) {
+    return error;
+  } else {
+    var status = (error.status === undefined) ? 500 : error.status ;
+    return { status: status, statusText: 'Npolar API error, failed accessing '+npolarApiConfig.base, data: 'Please inform data@npolar.no if this problem persists' };
+  }
+  };
+
+  // NpolarApiResource factory
+  // @param service e.g. { path: '/dataset', 'resource': 'Dataset'}
+  // @return NpolarApiResource - extended ngResource
+  // @todo service.get == null|GET|JSONP
+  // @todo make extending ngResource optional
+  // @todo Support user-supplied extending
+  // @todo Support non-search engine query/array/fetch
+  this.resource = function(service) {
+
+    var base = this.base(service);
+
+    // Default parameters
+    var params = { id:null, limit: 100, format: 'json', q: '', variant: 'atom' };
+
+    //var fields_feed = (angular.isString(service.fields)) ? service.fields : null ;
+    var fields_query = (angular.isString(service.fields)) ? service.fields : 'id,title,name,code,titles,links,created,updated' ;
+
+    //var params_feed = angular.extend({}, params, { fields: fields_feed });
+    var params_query = angular.extend({}, params, { variant: 'array', limit: 1000, fields: fields_query });
+
+    // @todo Store information on which APIs are  used
+
+    var resource = $resource(base+service.path+'/:id', {  }, {
+    feed: { method: 'GET', params: params, headers: { Accept:'application/json, application/vnd.geo+json' } },
+    query: { method: 'GET', params: params_query, isArray: true },
+    array: { method: 'GET', params: params_query, isArray: true },
+    fetch: { method: 'GET', params: { }, headers: { Accept:'application/json' } },
+    //delete: { method:'DELETE', params: {  }, headers: { Accept:'application/json', Authorization: NpolarApiSecurity.authorization() } },
+    update: { method:'PUT', params: { id: '@id' }, headers: { Accept:'application/json' } } //
+    });
+
+    // Extend Npolar API resources (individual documents)
+    angular.extend(resource.prototype, {
+    // Usage: var parameter = timeseries._link({rel: 'parameter', type: 'application/json'});
+    _link: function(link) {
+      return _.find(this.links, link);
+    },
+    _links: function(link) {
+      return _.select(this.links, link);
+    },
+    // @todo injectable resoiurce dereferencing...
+    // @tods lambda functions on link/links
+    _filters: function() {
+      var filters = [];
+      angular.forEach($location.search(), function(v,k) {
+      if (k.match(/^filter-\w+/)) {
+        var f = {};
+        f[k]=v;
+        filters.push(f);
+      }
+      });
+      return filters;
+
+    }
+
+    });
+    return resource;
+
+  };
+};
+Resource.$inject = ["npolarApiConfig", "NpolarApiSecurity", "$resource", "$location"];
+
+module.exports = Resource;
+
+},{"angular":24,"lodash":17}],5:[function(require,module,exports){
+'use strict';
+
+/**
+ * @ngInject
+ */
+var Security = function(base64, jwtHelper, npolarApiConfig, NpolarApiUser) {
+
+  this.authorization = function () {
+
+    var user = NpolarApiUser.getUser();
+   
+    if ('basic' === npolarApiConfig.security.authorization) {
+      return 'Basic '+ this.basicToken(user);
+    } else if ('jwt' === npolarApiConfig.security.authorization) {
+      return 'Bearer '+ user.jwt;
+    } else {
+      console.error('NpolarApiSecurity authorization not implemented: ' + npolarApiConfig.security.authorization);
+      return '';
+    }
+  };
+
+  this.basicToken = function(user) {
+  return base64.encode(user.username + ':' + user.password);
+  };
+
+  this.decodeJwt = function(jwt) {
+    return jwtHelper.decodeToken(jwt);
+  };
+
+  this.user = function() {
+    return this.getUser();
+  };
+
+  this.getUser = function() {
+    return NpolarApiUser.getUser();
+  };
+
+  this.setUser = function(user) {
+    return NpolarApiUser.setUser(user);
+  };
+
+  this.removeUser = function() {
+    return NpolarApiUser.removeUser();
+  };
+  
+  this.isJwtExpired = function() {
+    var jwt = this.getUser().jwt;
+    return (jwt === undefined) || ((Date.now() / 1000) > this.decodeJwt(jwt).exp );
+  };
+  
+  this.isJwtValid = function() {
+    return (false === this.isJwtExpired());
+  };
+
+};
+Security.$inject = ["base64", "jwtHelper", "npolarApiConfig", "NpolarApiUser"];
+
+module.exports = Security;
+},{}],6:[function(require,module,exports){
+/**
+* Authorization interceptor, adds JWT Bearer token to Npolar API requests
+*
+* Usage:
+* myApp.config(function($httpProvider) {
+*  $httpProvider.interceptors.push('npolarApiAuthInterceptor');
+* });
+*
+*/
+'use strict';
+
+/**
+ * @ngInject
+ */
+var authInterceptor = function ($rootScope, $q, $window, npolarApiConfig, NpolarApiSecurity) {
+  return {
+    request: function (config) {
+      
+      // Only intercept Npolar API requests
+      if (config.url !== undefined && config.url.indexOf(npolarApiConfig.base) === 0 || config.url.indexOf("https:"+npolarApiConfig.base) === 0) {
+        config.headers = config.headers || {};
+        
+        if (!config.headers.Authorization) {
+          config.headers.Authorization = NpolarApiSecurity.authorization();
+        }
+        console.log(config.method +' '+ config.url, config.params||{}, '[npolarApi]');
+        if ('PUT' === config.method) {
+          $rootScope.saving = true;
+        } else if ('DELETE' === config.method) {
+          $rootScope.deleting = true;
+        }
+      }
+      return config;
+    },
+    response: function (response) {
+
+      if (response.status >= 300 || response.status < 100) {
+        console.error(response.status +' '+ response.statusText + ' <- '+ response.config.method +' '+ response.config.url + ' [npolarApi]');
+      }
+      if (response.config.method !== 'GET') {
+        console.log(response.status +' '+ response.statusText + ' <- '+ response.config.method +' '+ response.config.url + ' [npolarApi]');
+      }
+      if ('PUT' === response.config.method) {
+        $rootScope.saving = false;
+      } else if ('DELETE' === response.config.method) {
+        $rootScope.deleting = false;
+      }
+      return response || $q.when(response);
+    }
+  };
+};
+authInterceptor.$inject = ["$rootScope", "$q", "$window", "npolarApiConfig", "NpolarApiSecurity"];
+
+module.exports = authInterceptor;
+
+},{}],7:[function(require,module,exports){
+'use strict';
+var angular = require('angular');
+
+// angular modules
+//window.angular = angular;
+require('angular-resource');
+require('angular-utf8-base64');
+require('angular-jwt');
+
+/**
+ * npolarApi: Angular 1.x module for the [Npolar API](http://api.npolar.no/)
+ */
+var npolarApi = angular.module('npolarApi', ['ngResource', 'utf8-base64', 'angular-jwt']);
+npolarApi.value('npolarApiConfig', require('./config'));
+npolarApi.service('NpolarApiUser', require('./session/User'));
+npolarApi.service('NpolarApiSecurity', require('./http/Security'));
+npolarApi.service('NpolarApiResource', require('./http/Resource'));
+npolarApi.factory('npolarApiAuthInterceptor', require('./http/authInterceptor'));
+npolarApi.service('NpolarApiText', require('./util/Text'));
+npolarApi.directive('npolarJsonText', require('./util/jsonText'));
+
+npolarApi.controller('NpolarBaseController', require('./controller/BaseController'));
+npolarApi.controller('NpolarEditController', require('./controller/EditController'));
+
+module.exports = npolarApi;
+
+},{"./config":1,"./controller/BaseController":2,"./controller/EditController":3,"./http/Resource":4,"./http/Security":5,"./http/authInterceptor":6,"./session/User":8,"./util/Text":9,"./util/jsonText":10,"angular":24,"angular-jwt":13,"angular-resource":15,"angular-utf8-base64":16}],8:[function(require,module,exports){
+// FIXME This service is misnamed and will probably die (it's just a thin session storage wrapper)
+'use strict';
+var angular = require('angular');
+
+/**
+ * @ngInject
+ */
+var User = function(base64) {
+
+  this.getUser = function() {
+    var user = sessionStorage.getItem(this.getStorageKey());
+    if (angular.isString(user)) {
+      return JSON.parse(base64.decode(user));
+    } else {
+      return {};
+    }
+  };
+
+  this.setUser = function(user) {
+  var key = this.getStorageKey(user);
+    sessionStorage.setItem(key, base64.encode(JSON.stringify(user)));
+  };
+
+  this.removeUser = function() {
+    sessionStorage.removeItem(this.getStorageKey());
+  };
+
+  this.getStorageKey = function() {
+    return 'NpolarApiUser';
+  };
+
+};
+User.$inject = ["base64"];
+
+module.exports = User;
+
+},{"angular":24}],9:[function(require,module,exports){
+'use strict';
+var _ = require('lodash');
+
+var Texxt = function () {
+
+  // Extract the first capture (1) for all regex matches in text
+  this.extract = function(text, regex, capture_capture) {
+
+    var extracted = [];
+    var m;
+    var capture_which_capture = capture_capture || 1;
+
+    while ((m = regex.exec(text)) !== null) {
+      if (m.index === regex.lastIndex) {
+        regex.lastIndex++;
+      }
+      extracted.push(m[capture_which_capture]);
+    }
+    return _.uniq(extracted);
+  };
+
+};
+
+module.exports = Texxt;
+
+},{"lodash":17}],10:[function(require,module,exports){
+/**
+ * Adapted from [Stackoverflow?]...
+ *
+ */
+'use strict';
+/**
+ * @ngInject
+ */
+var jsonText = function() {
+  return {
+    restrict: 'A',
+    require: 'ngModel',
+    link: function(scope, element, attr, ngModel) {
+      function into(input) {
+        //console.log(JSON.parse(input));
+        return JSON.parse(input);
+      }
+      function out(data) {
+        return JSON.stringify(data);
+      }
+      ngModel.$parsers.push(into);
+      ngModel.$formatters.push(out);
+    }
+  };
+};
+
+module.exports = jsonText;
+
+},{}],11:[function(require,module,exports){
+'use strict';
+
+module.exports = {
+  npolarApi: require('./api/'),
+  npolarUi: require('./ui/')
+};
+
+},{"./api/":7,"./ui/":20}],12:[function(require,module,exports){
+(function() {
+
+
+// Create all modules and define dependencies to make sure they exist
+// and are loaded in the correct order to satisfy dependency injection
+// before all nested files are concatenated by Grunt
+
+// Modules
+angular.module('angular-jwt',
+    [
+        'angular-jwt.interceptor',
+        'angular-jwt.jwt'
+    ]);
+
+ angular.module('angular-jwt.interceptor', [])
+  .provider('jwtInterceptor', function() {
+
+    this.urlParam = null;
+    this.authHeader = 'Authorization';
+    this.authPrefix = 'Bearer ';
+    this.tokenGetter = function() {
+      return null;
+    }
+
+    var config = this;
+
+    this.$get = ["$q", "$injector", "$rootScope", function ($q, $injector, $rootScope) {
+      return {
+        request: function (request) {
+          if (request.skipAuthorization) {
+            return request;
+          }
+
+          if (config.urlParam) {
+            request.params = request.params || {};
+            // Already has the token in the url itself
+            if (request.params[config.urlParam]) {
+              return request;
+            }
+          } else {
+            request.headers = request.headers || {};
+            // Already has an Authorization header
+            if (request.headers[config.authHeader]) {
+              return request;
+            }
+          }
+
+          var tokenPromise = $q.when($injector.invoke(config.tokenGetter, this, {
+            config: request
+          }));
+
+          return tokenPromise.then(function(token) {
+            if (token) {
+              if (config.urlParam) {
+                request.params[config.urlParam] = token;
+              } else {
+                request.headers[config.authHeader] = config.authPrefix + token;
+              }
+            }
+            return request;
+          });
+        },
+        responseError: function (response) {
+          // handle the case where the user is not authenticated
+          if (response.status === 401) {
+            $rootScope.$broadcast('unauthenticated', response);
+          }
+          return $q.reject(response);
+        }
+      };
+    }];
+  });
+
+ angular.module('angular-jwt.jwt', [])
+  .service('jwtHelper', function() {
+
+    this.urlBase64Decode = function(str) {
+      var output = str.replace(/-/g, '+').replace(/_/g, '/');
+      switch (output.length % 4) {
+        case 0: { break; }
+        case 2: { output += '=='; break; }
+        case 3: { output += '='; break; }
+        default: {
+          throw 'Illegal base64url string!';
+        }
+      }
+      return decodeURIComponent(escape(window.atob(output))); //polifyll https://github.com/davidchambers/Base64.js
+    }
+
+
+    this.decodeToken = function(token) {
+      var parts = token.split('.');
+
+      if (parts.length !== 3) {
+        throw new Error('JWT must have 3 parts');
+      }
+
+      var decoded = this.urlBase64Decode(parts[1]);
+      if (!decoded) {
+        throw new Error('Cannot decode the token');
+      }
+
+      return JSON.parse(decoded);
+    }
+
+    this.getTokenExpirationDate = function(token) {
+      var decoded;
+      decoded = this.decodeToken(token);
+
+      if(typeof decoded.exp === "undefined") {
+        return null;
+      }
+
+      var d = new Date(0); // The 0 here is the key, which sets the date to the epoch
+      d.setUTCSeconds(decoded.exp);
+
+      return d;
+    };
+
+    this.isTokenExpired = function(token, offsetSeconds) {
+      var d = this.getTokenExpirationDate(token);
+      offsetSeconds = offsetSeconds || 0;
+      if (d === null) {
+        return false;
+      }
+
+      // Token expired?
+      return !(d.valueOf() > (new Date().valueOf() + (offsetSeconds * 1000)));
+    };
+  });
+
+}());
+},{}],13:[function(require,module,exports){
+require('./dist/angular-jwt.js');
+module.exports = 'angular-jwt';
+
+
+},{"./dist/angular-jwt.js":12}],14:[function(require,module,exports){
+/**
+ * @license AngularJS v1.4.3
+ * (c) 2010-2015 Google, Inc. http://angularjs.org
+ * License: MIT
+ */
+(function(window, angular, undefined) {'use strict';
+
+var $resourceMinErr = angular.$$minErr('$resource');
+
+// Helper functions and regex to lookup a dotted path on an object
+// stopping at undefined/null.  The path must be composed of ASCII
+// identifiers (just like $parse)
+var MEMBER_NAME_REGEX = /^(\.[a-zA-Z_$@][0-9a-zA-Z_$@]*)+$/;
+
+function isValidDottedPath(path) {
+  return (path != null && path !== '' && path !== 'hasOwnProperty' &&
+      MEMBER_NAME_REGEX.test('.' + path));
+}
+
+function lookupDottedPath(obj, path) {
+  if (!isValidDottedPath(path)) {
+    throw $resourceMinErr('badmember', 'Dotted member path "@{0}" is invalid.', path);
+  }
+  var keys = path.split('.');
+  for (var i = 0, ii = keys.length; i < ii && obj !== undefined; i++) {
+    var key = keys[i];
+    obj = (obj !== null) ? obj[key] : undefined;
+  }
+  return obj;
+}
+
+/**
+ * Create a shallow copy of an object and clear other fields from the destination
+ */
+function shallowClearAndCopy(src, dst) {
+  dst = dst || {};
+
+  angular.forEach(dst, function(value, key) {
+    delete dst[key];
+  });
+
+  for (var key in src) {
+    if (src.hasOwnProperty(key) && !(key.charAt(0) === '$' && key.charAt(1) === '$')) {
+      dst[key] = src[key];
+    }
+  }
+
+  return dst;
+}
+
+/**
+ * @ngdoc module
+ * @name ngResource
+ * @description
+ *
+ * # ngResource
+ *
+ * The `ngResource` module provides interaction support with RESTful services
+ * via the $resource service.
+ *
+ *
+ * <div doc-module-components="ngResource"></div>
+ *
+ * See {@link ngResource.$resource `$resource`} for usage.
+ */
+
+/**
+ * @ngdoc service
+ * @name $resource
+ * @requires $http
+ *
+ * @description
+ * A factory which creates a resource object that lets you interact with
+ * [RESTful](http://en.wikipedia.org/wiki/Representational_State_Transfer) server-side data sources.
+ *
+ * The returned resource object has action methods which provide high-level behaviors without
+ * the need to interact with the low level {@link ng.$http $http} service.
+ *
+ * Requires the {@link ngResource `ngResource`} module to be installed.
+ *
+ * By default, trailing slashes will be stripped from the calculated URLs,
+ * which can pose problems with server backends that do not expect that
+ * behavior.  This can be disabled by configuring the `$resourceProvider` like
+ * this:
+ *
+ * ```js
+     app.config(['$resourceProvider', function($resourceProvider) {
+       // Don't strip trailing slashes from calculated URLs
+       $resourceProvider.defaults.stripTrailingSlashes = false;
+     }]);
+ * ```
+ *
+ * @param {string} url A parameterized URL template with parameters prefixed by `:` as in
+ *   `/user/:username`. If you are using a URL with a port number (e.g.
+ *   `http://example.com:8080/api`), it will be respected.
+ *
+ *   If you are using a url with a suffix, just add the suffix, like this:
+ *   `$resource('http://example.com/resource.json')` or `$resource('http://example.com/:id.json')`
+ *   or even `$resource('http://example.com/resource/:resource_id.:format')`
+ *   If the parameter before the suffix is empty, :resource_id in this case, then the `/.` will be
+ *   collapsed down to a single `.`.  If you need this sequence to appear and not collapse then you
+ *   can escape it with `/\.`.
+ *
+ * @param {Object=} paramDefaults Default values for `url` parameters. These can be overridden in
+ *   `actions` methods. If any of the parameter value is a function, it will be executed every time
+ *   when a param value needs to be obtained for a request (unless the param was overridden).
+ *
+ *   Each key value in the parameter object is first bound to url template if present and then any
+ *   excess keys are appended to the url search query after the `?`.
+ *
+ *   Given a template `/path/:verb` and parameter `{verb:'greet', salutation:'Hello'}` results in
+ *   URL `/path/greet?salutation=Hello`.
+ *
+ *   If the parameter value is prefixed with `@` then the value for that parameter will be extracted
+ *   from the corresponding property on the `data` object (provided when calling an action method).  For
+ *   example, if the `defaultParam` object is `{someParam: '@someProp'}` then the value of `someParam`
+ *   will be `data.someProp`.
+ *
+ * @param {Object.<Object>=} actions Hash with declaration of custom actions that should extend
+ *   the default set of resource actions. The declaration should be created in the format of {@link
+ *   ng.$http#usage $http.config}:
+ *
+ *       {action1: {method:?, params:?, isArray:?, headers:?, ...},
+ *        action2: {method:?, params:?, isArray:?, headers:?, ...},
+ *        ...}
+ *
+ *   Where:
+ *
+ *   - **`action`** – {string} – The name of action. This name becomes the name of the method on
+ *     your resource object.
+ *   - **`method`** – {string} – Case insensitive HTTP method (e.g. `GET`, `POST`, `PUT`,
+ *     `DELETE`, `JSONP`, etc).
+ *   - **`params`** – {Object=} – Optional set of pre-bound parameters for this action. If any of
+ *     the parameter value is a function, it will be executed every time when a param value needs to
+ *     be obtained for a request (unless the param was overridden).
+ *   - **`url`** – {string} – action specific `url` override. The url templating is supported just
+ *     like for the resource-level urls.
+ *   - **`isArray`** – {boolean=} – If true then the returned object for this action is an array,
+ *     see `returns` section.
+ *   - **`transformRequest`** –
+ *     `{function(data, headersGetter)|Array.<function(data, headersGetter)>}` –
+ *     transform function or an array of such functions. The transform function takes the http
+ *     request body and headers and returns its transformed (typically serialized) version.
+ *     By default, transformRequest will contain one function that checks if the request data is
+ *     an object and serializes to using `angular.toJson`. To prevent this behavior, set
+ *     `transformRequest` to an empty array: `transformRequest: []`
+ *   - **`transformResponse`** –
+ *     `{function(data, headersGetter)|Array.<function(data, headersGetter)>}` –
+ *     transform function or an array of such functions. The transform function takes the http
+ *     response body and headers and returns its transformed (typically deserialized) version.
+ *     By default, transformResponse will contain one function that checks if the response looks like
+ *     a JSON string and deserializes it using `angular.fromJson`. To prevent this behavior, set
+ *     `transformResponse` to an empty array: `transformResponse: []`
+ *   - **`cache`** – `{boolean|Cache}` – If true, a default $http cache will be used to cache the
+ *     GET request, otherwise if a cache instance built with
+ *     {@link ng.$cacheFactory $cacheFactory}, this cache will be used for
+ *     caching.
+ *   - **`timeout`** – `{number|Promise}` – timeout in milliseconds, or {@link ng.$q promise} that
+ *     should abort the request when resolved.
+ *   - **`withCredentials`** - `{boolean}` - whether to set the `withCredentials` flag on the
+ *     XHR object. See
+ *     [requests with credentials](https://developer.mozilla.org/en/http_access_control#section_5)
+ *     for more information.
+ *   - **`responseType`** - `{string}` - see
+ *     [requestType](https://developer.mozilla.org/en-US/docs/DOM/XMLHttpRequest#responseType).
+ *   - **`interceptor`** - `{Object=}` - The interceptor object has two optional methods -
+ *     `response` and `responseError`. Both `response` and `responseError` interceptors get called
+ *     with `http response` object. See {@link ng.$http $http interceptors}.
+ *
+ * @param {Object} options Hash with custom settings that should extend the
+ *   default `$resourceProvider` behavior.  The only supported option is
+ *
+ *   Where:
+ *
+ *   - **`stripTrailingSlashes`** – {boolean} – If true then the trailing
+ *   slashes from any calculated URL will be stripped. (Defaults to true.)
+ *
+ * @returns {Object} A resource "class" object with methods for the default set of resource actions
+ *   optionally extended with custom `actions`. The default set contains these actions:
+ *   ```js
+ *   { 'get':    {method:'GET'},
+ *     'save':   {method:'POST'},
+ *     'query':  {method:'GET', isArray:true},
+ *     'remove': {method:'DELETE'},
+ *     'delete': {method:'DELETE'} };
+ *   ```
+ *
+ *   Calling these methods invoke an {@link ng.$http} with the specified http method,
+ *   destination and parameters. When the data is returned from the server then the object is an
+ *   instance of the resource class. The actions `save`, `remove` and `delete` are available on it
+ *   as  methods with the `$` prefix. This allows you to easily perform CRUD operations (create,
+ *   read, update, delete) on server-side data like this:
+ *   ```js
+ *   var User = $resource('/user/:userId', {userId:'@id'});
+ *   var user = User.get({userId:123}, function() {
+ *     user.abc = true;
+ *     user.$save();
+ *   });
+ *   ```
+ *
+ *   It is important to realize that invoking a $resource object method immediately returns an
+ *   empty reference (object or array depending on `isArray`). Once the data is returned from the
+ *   server the existing reference is populated with the actual data. This is a useful trick since
+ *   usually the resource is assigned to a model which is then rendered by the view. Having an empty
+ *   object results in no rendering, once the data arrives from the server then the object is
+ *   populated with the data and the view automatically re-renders itself showing the new data. This
+ *   means that in most cases one never has to write a callback function for the action methods.
+ *
+ *   The action methods on the class object or instance object can be invoked with the following
+ *   parameters:
+ *
+ *   - HTTP GET "class" actions: `Resource.action([parameters], [success], [error])`
+ *   - non-GET "class" actions: `Resource.action([parameters], postData, [success], [error])`
+ *   - non-GET instance actions:  `instance.$action([parameters], [success], [error])`
+ *
+ *
+ *   Success callback is called with (value, responseHeaders) arguments, where the value is
+ *   the populated resource instance or collection object. The error callback is called
+ *   with (httpResponse) argument.
+ *
+ *   Class actions return empty instance (with additional properties below).
+ *   Instance actions return promise of the action.
+ *
+ *   The Resource instances and collection have these additional properties:
+ *
+ *   - `$promise`: the {@link ng.$q promise} of the original server interaction that created this
+ *     instance or collection.
+ *
+ *     On success, the promise is resolved with the same resource instance or collection object,
+ *     updated with data from server. This makes it easy to use in
+ *     {@link ngRoute.$routeProvider resolve section of $routeProvider.when()} to defer view
+ *     rendering until the resource(s) are loaded.
+ *
+ *     On failure, the promise is resolved with the {@link ng.$http http response} object, without
+ *     the `resource` property.
+ *
+ *     If an interceptor object was provided, the promise will instead be resolved with the value
+ *     returned by the interceptor.
+ *
+ *   - `$resolved`: `true` after first server interaction is completed (either with success or
+ *      rejection), `false` before that. Knowing if the Resource has been resolved is useful in
+ *      data-binding.
+ *
+ * @example
+ *
+ * # Credit card resource
+ *
+ * ```js
+     // Define CreditCard class
+     var CreditCard = $resource('/user/:userId/card/:cardId',
+      {userId:123, cardId:'@id'}, {
+       charge: {method:'POST', params:{charge:true}}
+      });
+
+     // We can retrieve a collection from the server
+     var cards = CreditCard.query(function() {
+       // GET: /user/123/card
+       // server returns: [ {id:456, number:'1234', name:'Smith'} ];
+
+       var card = cards[0];
+       // each item is an instance of CreditCard
+       expect(card instanceof CreditCard).toEqual(true);
+       card.name = "J. Smith";
+       // non GET methods are mapped onto the instances
+       card.$save();
+       // POST: /user/123/card/456 {id:456, number:'1234', name:'J. Smith'}
+       // server returns: {id:456, number:'1234', name: 'J. Smith'};
+
+       // our custom method is mapped as well.
+       card.$charge({amount:9.99});
+       // POST: /user/123/card/456?amount=9.99&charge=true {id:456, number:'1234', name:'J. Smith'}
+     });
+
+     // we can create an instance as well
+     var newCard = new CreditCard({number:'0123'});
+     newCard.name = "Mike Smith";
+     newCard.$save();
+     // POST: /user/123/card {number:'0123', name:'Mike Smith'}
+     // server returns: {id:789, number:'0123', name: 'Mike Smith'};
+     expect(newCard.id).toEqual(789);
+ * ```
+ *
+ * The object returned from this function execution is a resource "class" which has "static" method
+ * for each action in the definition.
+ *
+ * Calling these methods invoke `$http` on the `url` template with the given `method`, `params` and
+ * `headers`.
+ * When the data is returned from the server then the object is an instance of the resource type and
+ * all of the non-GET methods are available with `$` prefix. This allows you to easily support CRUD
+ * operations (create, read, update, delete) on server-side data.
+
+   ```js
+     var User = $resource('/user/:userId', {userId:'@id'});
+     User.get({userId:123}, function(user) {
+       user.abc = true;
+       user.$save();
+     });
+   ```
+ *
+ * It's worth noting that the success callback for `get`, `query` and other methods gets passed
+ * in the response that came from the server as well as $http header getter function, so one
+ * could rewrite the above example and get access to http headers as:
+ *
+   ```js
+     var User = $resource('/user/:userId', {userId:'@id'});
+     User.get({userId:123}, function(u, getResponseHeaders){
+       u.abc = true;
+       u.$save(function(u, putResponseHeaders) {
+         //u => saved user object
+         //putResponseHeaders => $http header getter
+       });
+     });
+   ```
+ *
+ * You can also access the raw `$http` promise via the `$promise` property on the object returned
+ *
+   ```
+     var User = $resource('/user/:userId', {userId:'@id'});
+     User.get({userId:123})
+         .$promise.then(function(user) {
+           $scope.user = user;
+         });
+   ```
+
+ * # Creating a custom 'PUT' request
+ * In this example we create a custom method on our resource to make a PUT request
+ * ```js
+ *    var app = angular.module('app', ['ngResource', 'ngRoute']);
+ *
+ *    // Some APIs expect a PUT request in the format URL/object/ID
+ *    // Here we are creating an 'update' method
+ *    app.factory('Notes', ['$resource', function($resource) {
+ *    return $resource('/notes/:id', null,
+ *        {
+ *            'update': { method:'PUT' }
+ *        });
+ *    }]);
+ *
+ *    // In our controller we get the ID from the URL using ngRoute and $routeParams
+ *    // We pass in $routeParams and our Notes factory along with $scope
+ *    app.controller('NotesCtrl', ['$scope', '$routeParams', 'Notes',
+                                      function($scope, $routeParams, Notes) {
+ *    // First get a note object from the factory
+ *    var note = Notes.get({ id:$routeParams.id });
+ *    $id = note.id;
+ *
+ *    // Now call update passing in the ID first then the object you are updating
+ *    Notes.update({ id:$id }, note);
+ *
+ *    // This will PUT /notes/ID with the note object in the request payload
+ *    }]);
+ * ```
+ */
+angular.module('ngResource', ['ng']).
+  provider('$resource', function() {
+    var provider = this;
+
+    this.defaults = {
+      // Strip slashes by default
+      stripTrailingSlashes: true,
+
+      // Default actions configuration
+      actions: {
+        'get': {method: 'GET'},
+        'save': {method: 'POST'},
+        'query': {method: 'GET', isArray: true},
+        'remove': {method: 'DELETE'},
+        'delete': {method: 'DELETE'}
+      }
+    };
+
+    this.$get = ['$http', '$q', function($http, $q) {
+
+      var noop = angular.noop,
+        forEach = angular.forEach,
+        extend = angular.extend,
+        copy = angular.copy,
+        isFunction = angular.isFunction;
+
+      /**
+       * We need our custom method because encodeURIComponent is too aggressive and doesn't follow
+       * http://www.ietf.org/rfc/rfc3986.txt with regards to the character set
+       * (pchar) allowed in path segments:
+       *    segment       = *pchar
+       *    pchar         = unreserved / pct-encoded / sub-delims / ":" / "@"
+       *    pct-encoded   = "%" HEXDIG HEXDIG
+       *    unreserved    = ALPHA / DIGIT / "-" / "." / "_" / "~"
+       *    sub-delims    = "!" / "$" / "&" / "'" / "(" / ")"
+       *                     / "*" / "+" / "," / ";" / "="
+       */
+      function encodeUriSegment(val) {
+        return encodeUriQuery(val, true).
+          replace(/%26/gi, '&').
+          replace(/%3D/gi, '=').
+          replace(/%2B/gi, '+');
+      }
+
+
+      /**
+       * This method is intended for encoding *key* or *value* parts of query component. We need a
+       * custom method because encodeURIComponent is too aggressive and encodes stuff that doesn't
+       * have to be encoded per http://tools.ietf.org/html/rfc3986:
+       *    query       = *( pchar / "/" / "?" )
+       *    pchar         = unreserved / pct-encoded / sub-delims / ":" / "@"
+       *    unreserved    = ALPHA / DIGIT / "-" / "." / "_" / "~"
+       *    pct-encoded   = "%" HEXDIG HEXDIG
+       *    sub-delims    = "!" / "$" / "&" / "'" / "(" / ")"
+       *                     / "*" / "+" / "," / ";" / "="
+       */
+      function encodeUriQuery(val, pctEncodeSpaces) {
+        return encodeURIComponent(val).
+          replace(/%40/gi, '@').
+          replace(/%3A/gi, ':').
+          replace(/%24/g, '$').
+          replace(/%2C/gi, ',').
+          replace(/%20/g, (pctEncodeSpaces ? '%20' : '+'));
+      }
+
+      function Route(template, defaults) {
+        this.template = template;
+        this.defaults = extend({}, provider.defaults, defaults);
+        this.urlParams = {};
+      }
+
+      Route.prototype = {
+        setUrlParams: function(config, params, actionUrl) {
+          var self = this,
+            url = actionUrl || self.template,
+            val,
+            encodedVal;
+
+          var urlParams = self.urlParams = {};
+          forEach(url.split(/\W/), function(param) {
+            if (param === 'hasOwnProperty') {
+              throw $resourceMinErr('badname', "hasOwnProperty is not a valid parameter name.");
+            }
+            if (!(new RegExp("^\\d+$").test(param)) && param &&
+              (new RegExp("(^|[^\\\\]):" + param + "(\\W|$)").test(url))) {
+              urlParams[param] = true;
+            }
+          });
+          url = url.replace(/\\:/g, ':');
+
+          params = params || {};
+          forEach(self.urlParams, function(_, urlParam) {
+            val = params.hasOwnProperty(urlParam) ? params[urlParam] : self.defaults[urlParam];
+            if (angular.isDefined(val) && val !== null) {
+              encodedVal = encodeUriSegment(val);
+              url = url.replace(new RegExp(":" + urlParam + "(\\W|$)", "g"), function(match, p1) {
+                return encodedVal + p1;
+              });
+            } else {
+              url = url.replace(new RegExp("(\/?):" + urlParam + "(\\W|$)", "g"), function(match,
+                  leadingSlashes, tail) {
+                if (tail.charAt(0) == '/') {
+                  return tail;
+                } else {
+                  return leadingSlashes + tail;
+                }
+              });
+            }
+          });
+
+          // strip trailing slashes and set the url (unless this behavior is specifically disabled)
+          if (self.defaults.stripTrailingSlashes) {
+            url = url.replace(/\/+$/, '') || '/';
+          }
+
+          // then replace collapse `/.` if found in the last URL path segment before the query
+          // E.g. `http://url.com/id./format?q=x` becomes `http://url.com/id.format?q=x`
+          url = url.replace(/\/\.(?=\w+($|\?))/, '.');
+          // replace escaped `/\.` with `/.`
+          config.url = url.replace(/\/\\\./, '/.');
+
+
+          // set params - delegate param encoding to $http
+          forEach(params, function(value, key) {
+            if (!self.urlParams[key]) {
+              config.params = config.params || {};
+              config.params[key] = value;
+            }
+          });
+        }
+      };
+
+
+      function resourceFactory(url, paramDefaults, actions, options) {
+        var route = new Route(url, options);
+
+        actions = extend({}, provider.defaults.actions, actions);
+
+        function extractParams(data, actionParams) {
+          var ids = {};
+          actionParams = extend({}, paramDefaults, actionParams);
+          forEach(actionParams, function(value, key) {
+            if (isFunction(value)) { value = value(); }
+            ids[key] = value && value.charAt && value.charAt(0) == '@' ?
+              lookupDottedPath(data, value.substr(1)) : value;
+          });
+          return ids;
+        }
+
+        function defaultResponseInterceptor(response) {
+          return response.resource;
+        }
+
+        function Resource(value) {
+          shallowClearAndCopy(value || {}, this);
+        }
+
+        Resource.prototype.toJSON = function() {
+          var data = extend({}, this);
+          delete data.$promise;
+          delete data.$resolved;
+          return data;
+        };
+
+        forEach(actions, function(action, name) {
+          var hasBody = /^(POST|PUT|PATCH)$/i.test(action.method);
+
+          Resource[name] = function(a1, a2, a3, a4) {
+            var params = {}, data, success, error;
+
+            /* jshint -W086 */ /* (purposefully fall through case statements) */
+            switch (arguments.length) {
+              case 4:
+                error = a4;
+                success = a3;
+              //fallthrough
+              case 3:
+              case 2:
+                if (isFunction(a2)) {
+                  if (isFunction(a1)) {
+                    success = a1;
+                    error = a2;
+                    break;
+                  }
+
+                  success = a2;
+                  error = a3;
+                  //fallthrough
+                } else {
+                  params = a1;
+                  data = a2;
+                  success = a3;
+                  break;
+                }
+              case 1:
+                if (isFunction(a1)) success = a1;
+                else if (hasBody) data = a1;
+                else params = a1;
+                break;
+              case 0: break;
+              default:
+                throw $resourceMinErr('badargs',
+                  "Expected up to 4 arguments [params, data, success, error], got {0} arguments",
+                  arguments.length);
+            }
+            /* jshint +W086 */ /* (purposefully fall through case statements) */
+
+            var isInstanceCall = this instanceof Resource;
+            var value = isInstanceCall ? data : (action.isArray ? [] : new Resource(data));
+            var httpConfig = {};
+            var responseInterceptor = action.interceptor && action.interceptor.response ||
+              defaultResponseInterceptor;
+            var responseErrorInterceptor = action.interceptor && action.interceptor.responseError ||
+              undefined;
+
+            forEach(action, function(value, key) {
+              if (key != 'params' && key != 'isArray' && key != 'interceptor') {
+                httpConfig[key] = copy(value);
+              }
+            });
+
+            if (hasBody) httpConfig.data = data;
+            route.setUrlParams(httpConfig,
+              extend({}, extractParams(data, action.params || {}), params),
+              action.url);
+
+            var promise = $http(httpConfig).then(function(response) {
+              var data = response.data,
+                promise = value.$promise;
+
+              if (data) {
+                // Need to convert action.isArray to boolean in case it is undefined
+                // jshint -W018
+                if (angular.isArray(data) !== (!!action.isArray)) {
+                  throw $resourceMinErr('badcfg',
+                      'Error in resource configuration for action `{0}`. Expected response to ' +
+                      'contain an {1} but got an {2} (Request: {3} {4})', name, action.isArray ? 'array' : 'object',
+                    angular.isArray(data) ? 'array' : 'object', httpConfig.method, httpConfig.url);
+                }
+                // jshint +W018
+                if (action.isArray) {
+                  value.length = 0;
+                  forEach(data, function(item) {
+                    if (typeof item === "object") {
+                      value.push(new Resource(item));
+                    } else {
+                      // Valid JSON values may be string literals, and these should not be converted
+                      // into objects. These items will not have access to the Resource prototype
+                      // methods, but unfortunately there
+                      value.push(item);
+                    }
+                  });
+                } else {
+                  shallowClearAndCopy(data, value);
+                  value.$promise = promise;
+                }
+              }
+
+              value.$resolved = true;
+
+              response.resource = value;
+
+              return response;
+            }, function(response) {
+              value.$resolved = true;
+
+              (error || noop)(response);
+
+              return $q.reject(response);
+            });
+
+            promise = promise.then(
+              function(response) {
+                var value = responseInterceptor(response);
+                (success || noop)(value, response.headers);
+                return value;
+              },
+              responseErrorInterceptor);
+
+            if (!isInstanceCall) {
+              // we are creating instance / collection
+              // - set the initial promise
+              // - return the instance / collection
+              value.$promise = promise;
+              value.$resolved = false;
+
+              return value;
+            }
+
+            // instance call
+            return promise;
+          };
+
+
+          Resource.prototype['$' + name] = function(params, success, error) {
+            if (isFunction(params)) {
+              error = success; success = params; params = {};
+            }
+            var result = Resource[name].call(this, params, this, success, error);
+            return result.$promise || result;
+          };
+        });
+
+        Resource.bind = function(additionalParamDefaults) {
+          return resourceFactory(url, extend({}, paramDefaults, additionalParamDefaults), actions);
+        };
+
+        return Resource;
+      }
+
+      return resourceFactory;
+    }];
+  });
+
+
+})(window, window.angular);
+
+},{}],15:[function(require,module,exports){
+require('./angular-resource');
+module.exports = 'ngResource';
+
+},{"./angular-resource":14}],16:[function(require,module,exports){
+'use strict';
+
+function Base64 () {
+    angular.module('utf8-base64',[]).constant('base64', (function() {
+
+        /*
+         * Encapsulation of Andrey Bezyazychniy's encapsulation of Vassilis Petroulias's base64.js library.
+         * As well as Andrey Bezyazychniy's AngularJS wrapper, an additional CommonJS wrapper has been added.
+         * Original notice included below
+         */
+
+        /*
+         Copyright Vassilis Petroulias [DRDigit]
+
+         Licensed under the Apache License, Version 2.0 (the "License");
+         you may not use this file except in compliance with the License.
+         You may obtain a copy of the License at
+
+         http://www.apache.org/licenses/LICENSE-2.0
+
+         Unless required by applicable law or agreed to in writing, software
+         distributed under the License is distributed on an "AS IS" BASIS,
+         WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+         See the License for the specific language governing permissions and
+         limitations under the License.
+         */
+        var B64 = {
+            alphabet: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=',
+            lookup: null,
+            ie: /MSIE /.test(navigator.userAgent),
+            ieo: /MSIE [67]/.test(navigator.userAgent),
+            encode: function (s) {
+                /* jshint bitwise:false */
+                var buffer = B64.toUtf8(s),
+                    position = -1,
+                    result,
+                    len = buffer.length,
+                    nan0, nan1, nan2, enc = [, , , ];
+                
+                if (B64.ie) {
+                    result = [];
+                    while (++position < len) {
+                        nan0 = buffer[position];
+                        nan1 = buffer[++position];
+                        enc[0] = nan0 >> 2;
+                        enc[1] = ((nan0 & 3) << 4) | (nan1 >> 4);
+                        if (isNaN(nan1))
+                            enc[2] = enc[3] = 64;
+                        else {
+                            nan2 = buffer[++position];
+                            enc[2] = ((nan1 & 15) << 2) | (nan2 >> 6);
+                            enc[3] = (isNaN(nan2)) ? 64 : nan2 & 63;
+                        }
+                        result.push(B64.alphabet.charAt(enc[0]), B64.alphabet.charAt(enc[1]), B64.alphabet.charAt(enc[2]), B64.alphabet.charAt(enc[3]));
+                    }
+                    return result.join('');
+                } else {
+                    result = '';
+                    while (++position < len) {
+                        nan0 = buffer[position];
+                        nan1 = buffer[++position];
+                        enc[0] = nan0 >> 2;
+                        enc[1] = ((nan0 & 3) << 4) | (nan1 >> 4);
+                        if (isNaN(nan1))
+                            enc[2] = enc[3] = 64;
+                        else {
+                            nan2 = buffer[++position];
+                            enc[2] = ((nan1 & 15) << 2) | (nan2 >> 6);
+                            enc[3] = (isNaN(nan2)) ? 64 : nan2 & 63;
+                        }
+                        result += B64.alphabet[enc[0]] + B64.alphabet[enc[1]] + B64.alphabet[enc[2]] + B64.alphabet[enc[3]];
+                    }
+                    return result;
+                }
+            },
+            decode: function (s) {
+                /* jshint bitwise:false */
+                s = s.replace(/\s/g, '');
+                if (s.length % 4)
+                    throw new Error('InvalidLengthError: decode failed: The string to be decoded is not the correct length for a base64 encoded string.');
+                if(/[^A-Za-z0-9+\/=\s]/g.test(s))
+                    throw new Error('InvalidCharacterError: decode failed: The string contains characters invalid in a base64 encoded string.');
+
+                var buffer = B64.fromUtf8(s),
+                    position = 0,
+                    result,
+                    len = buffer.length;
+
+                if (B64.ieo) {
+                    result = [];
+                    while (position < len) {
+                        if (buffer[position] < 128)
+                            result.push(String.fromCharCode(buffer[position++]));
+                        else if (buffer[position] > 191 && buffer[position] < 224)
+                            result.push(String.fromCharCode(((buffer[position++] & 31) << 6) | (buffer[position++] & 63)));
+                        else
+                            result.push(String.fromCharCode(((buffer[position++] & 15) << 12) | ((buffer[position++] & 63) << 6) | (buffer[position++] & 63)));
+                    }
+                    return result.join('');
+                } else {
+                    result = '';
+                    while (position < len) {
+                        if (buffer[position] < 128)
+                            result += String.fromCharCode(buffer[position++]);
+                        else if (buffer[position] > 191 && buffer[position] < 224)
+                            result += String.fromCharCode(((buffer[position++] & 31) << 6) | (buffer[position++] & 63));
+                        else
+                            result += String.fromCharCode(((buffer[position++] & 15) << 12) | ((buffer[position++] & 63) << 6) | (buffer[position++] & 63));
+                    }
+                    return result;
+                }
+            },
+            toUtf8: function (s) {
+                /* jshint bitwise:false */
+                var position = -1,
+                    len = s.length,
+                    chr, buffer = [];
+                if (/^[\x00-\x7f]*$/.test(s)) while (++position < len)
+                    buffer.push(s.charCodeAt(position));
+                else while (++position < len) {
+                    chr = s.charCodeAt(position);
+                    if (chr < 128)
+                        buffer.push(chr);
+                    else if (chr < 2048)
+                        buffer.push((chr >> 6) | 192, (chr & 63) | 128);
+                    else
+                        buffer.push((chr >> 12) | 224, ((chr >> 6) & 63) | 128, (chr & 63) | 128);
+                }
+                return buffer;
+            },
+            fromUtf8: function (s) {
+                /* jshint bitwise:false */
+                var position = -1,
+                    len, buffer = [],
+                    enc = [, , , ];
+                if (!B64.lookup) {
+                    len = B64.alphabet.length;
+                    B64.lookup = {};
+                    while (++position < len)
+                        B64.lookup[B64.alphabet.charAt(position)] = position;
+                    position = -1;
+                }
+                len = s.length;
+                while (++position < len) {
+                    enc[0] = B64.lookup[s.charAt(position)];
+                    enc[1] = B64.lookup[s.charAt(++position)];
+                    buffer.push((enc[0] << 2) | (enc[1] >> 4));
+                    enc[2] = B64.lookup[s.charAt(++position)];
+                    if (enc[2] === 64)
+                        break;
+                    buffer.push(((enc[1] & 15) << 4) | (enc[2] >> 2));
+                    enc[3] = B64.lookup[s.charAt(++position)];
+                    if (enc[3] === 64)
+                        break;
+                    buffer.push(((enc[2] & 3) << 6) | enc[3]);
+                }
+                return buffer;
+            }
+        };
+
+        var B64url = {
+            decode: function(input) {
+                // Replace non-url compatible chars with base64 standard chars
+                input = input
+                    .replace(/-/g, '+')
+                    .replace(/_/g, '/');
+
+                // Pad out with standard base64 required padding characters
+                var pad = input.length % 4;
+                if(pad) {
+                  if(pad === 1) {
+                    throw new Error('InvalidLengthError: Input base64url string is the wrong length to determine padding');
+                  }
+                  input += new Array(5-pad).join('=');
+                }
+
+                return B64.decode(input);
+            },
+
+            encode: function(input) {
+                var output = B64.encode(input);
+                return output
+                    .replace(/\+/g, '-')
+                    .replace(/\//g, '_')
+                    .split('=', 1)[0];
+            }
+        };
+
+        return {
+            decode: B64.decode,
+            encode: B64.encode,
+            urldecode: B64url.decode,
+            urlencode: B64url.encode,
+        };
+    })());
+}
+
+// check for Module support, otherwise explicitly call the Base64 function to setup the angular module.
+if (typeof module !== 'undefined' && module.exports)
+{
+    module.exports = new Base64();
+}
+else
+{
+    Base64();
+}
+},{}],17:[function(require,module,exports){
+(function (global){
+/**
+ * @license
+ * Lo-Dash 2.4.2 (Custom Build) <https://lodash.com/>
+ * Build: `lodash modern -o ./dist/lodash.js`
+ * Copyright 2012-2013 The Dojo Foundation <http://dojofoundation.org/>
+ * Based on Underscore.js 1.5.2 <http://underscorejs.org/LICENSE>
+ * Copyright 2009-2013 Jeremy Ashkenas, DocumentCloud and Investigative Reporters & Editors
+ * Available under MIT license <https://lodash.com/license>
+ */
+;(function() {
+
+  /** Used as a safe reference for `undefined` in pre ES5 environments */
+  var undefined;
+
+  /** Used to pool arrays and objects used internally */
+  var arrayPool = [],
+      objectPool = [];
+
+  /** Used to generate unique IDs */
+  var idCounter = 0;
+
+  /** Used to prefix keys to avoid issues with `__proto__` and properties on `Object.prototype` */
+  var keyPrefix = +new Date + '';
+
+  /** Used as the size when optimizations are enabled for large arrays */
+  var largeArraySize = 75;
+
+  /** Used as the max size of the `arrayPool` and `objectPool` */
+  var maxPoolSize = 40;
+
+  /** Used to detect and test whitespace */
+  var whitespace = (
+    // whitespace
+    ' \t\x0B\f\xA0\ufeff' +
+
+    // line terminators
+    '\n\r\u2028\u2029' +
+
+    // unicode category "Zs" space separators
+    '\u1680\u180e\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u202f\u205f\u3000'
+  );
+
+  /** Used to match empty string literals in compiled template source */
+  var reEmptyStringLeading = /\b__p \+= '';/g,
+      reEmptyStringMiddle = /\b(__p \+=) '' \+/g,
+      reEmptyStringTrailing = /(__e\(.*?\)|\b__t\)) \+\n'';/g;
+
+  /**
+   * Used to match ES6 template delimiters
+   * http://people.mozilla.org/~jorendorff/es6-draft.html#sec-literals-string-literals
+   */
+  var reEsTemplate = /\$\{([^\\}]*(?:\\.[^\\}]*)*)\}/g;
+
+  /** Used to match regexp flags from their coerced string values */
+  var reFlags = /\w*$/;
+
+  /** Used to detected named functions */
+  var reFuncName = /^\s*function[ \n\r\t]+\w/;
+
+  /** Used to match "interpolate" template delimiters */
+  var reInterpolate = /<%=([\s\S]+?)%>/g;
+
+  /** Used to match leading whitespace and zeros to be removed */
+  var reLeadingSpacesAndZeros = RegExp('^[' + whitespace + ']*0+(?=.$)');
+
+  /** Used to ensure capturing order of template delimiters */
+  var reNoMatch = /($^)/;
+
+  /** Used to detect functions containing a `this` reference */
+  var reThis = /\bthis\b/;
+
+  /** Used to match unescaped characters in compiled string literals */
+  var reUnescapedString = /['\n\r\t\u2028\u2029\\]/g;
+
+  /** Used to assign default `context` object properties */
+  var contextProps = [
+    'Array', 'Boolean', 'Date', 'Function', 'Math', 'Number', 'Object',
+    'RegExp', 'String', '_', 'attachEvent', 'clearTimeout', 'isFinite', 'isNaN',
+    'parseInt', 'setTimeout'
+  ];
+
+  /** Used to make template sourceURLs easier to identify */
+  var templateCounter = 0;
+
+  /** `Object#toString` result shortcuts */
+  var argsClass = '[object Arguments]',
+      arrayClass = '[object Array]',
+      boolClass = '[object Boolean]',
+      dateClass = '[object Date]',
+      funcClass = '[object Function]',
+      numberClass = '[object Number]',
+      objectClass = '[object Object]',
+      regexpClass = '[object RegExp]',
+      stringClass = '[object String]';
+
+  /** Used to identify object classifications that `_.clone` supports */
+  var cloneableClasses = {};
+  cloneableClasses[funcClass] = false;
+  cloneableClasses[argsClass] = cloneableClasses[arrayClass] =
+  cloneableClasses[boolClass] = cloneableClasses[dateClass] =
+  cloneableClasses[numberClass] = cloneableClasses[objectClass] =
+  cloneableClasses[regexpClass] = cloneableClasses[stringClass] = true;
+
+  /** Used as an internal `_.debounce` options object */
+  var debounceOptions = {
+    'leading': false,
+    'maxWait': 0,
+    'trailing': false
+  };
+
+  /** Used as the property descriptor for `__bindData__` */
+  var descriptor = {
+    'configurable': false,
+    'enumerable': false,
+    'value': null,
+    'writable': false
+  };
+
+  /** Used to determine if values are of the language type Object */
+  var objectTypes = {
+    'boolean': false,
+    'function': true,
+    'object': true,
+    'number': false,
+    'string': false,
+    'undefined': false
+  };
+
+  /** Used to escape characters for inclusion in compiled string literals */
+  var stringEscapes = {
+    '\\': '\\',
+    "'": "'",
+    '\n': 'n',
+    '\r': 'r',
+    '\t': 't',
+    '\u2028': 'u2028',
+    '\u2029': 'u2029'
+  };
+
+  /** Used as a reference to the global object */
+  var root = (objectTypes[typeof window] && window) || this;
+
+  /** Detect free variable `exports` */
+  var freeExports = objectTypes[typeof exports] && exports && !exports.nodeType && exports;
+
+  /** Detect free variable `module` */
+  var freeModule = objectTypes[typeof module] && module && !module.nodeType && module;
+
+  /** Detect the popular CommonJS extension `module.exports` */
+  var moduleExports = freeModule && freeModule.exports === freeExports && freeExports;
+
+  /** Detect free variable `global` from Node.js or Browserified code and use it as `root` */
+  var freeGlobal = objectTypes[typeof global] && global;
+  if (freeGlobal && (freeGlobal.global === freeGlobal || freeGlobal.window === freeGlobal)) {
+    root = freeGlobal;
+  }
+
+  /*--------------------------------------------------------------------------*/
+
+  /**
+   * The base implementation of `_.indexOf` without support for binary searches
+   * or `fromIndex` constraints.
+   *
+   * @private
+   * @param {Array} array The array to search.
+   * @param {*} value The value to search for.
+   * @param {number} [fromIndex=0] The index to search from.
+   * @returns {number} Returns the index of the matched value or `-1`.
+   */
+  function baseIndexOf(array, value, fromIndex) {
+    var index = (fromIndex || 0) - 1,
+        length = array ? array.length : 0;
+
+    while (++index < length) {
+      if (array[index] === value) {
+        return index;
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * An implementation of `_.contains` for cache objects that mimics the return
+   * signature of `_.indexOf` by returning `0` if the value is found, else `-1`.
+   *
+   * @private
+   * @param {Object} cache The cache object to inspect.
+   * @param {*} value The value to search for.
+   * @returns {number} Returns `0` if `value` is found, else `-1`.
+   */
+  function cacheIndexOf(cache, value) {
+    var type = typeof value;
+    cache = cache.cache;
+
+    if (type == 'boolean' || value == null) {
+      return cache[value] ? 0 : -1;
+    }
+    if (type != 'number' && type != 'string') {
+      type = 'object';
+    }
+    var key = type == 'number' ? value : keyPrefix + value;
+    cache = (cache = cache[type]) && cache[key];
+
+    return type == 'object'
+      ? (cache && baseIndexOf(cache, value) > -1 ? 0 : -1)
+      : (cache ? 0 : -1);
+  }
+
+  /**
+   * Adds a given value to the corresponding cache object.
+   *
+   * @private
+   * @param {*} value The value to add to the cache.
+   */
+  function cachePush(value) {
+    var cache = this.cache,
+        type = typeof value;
+
+    if (type == 'boolean' || value == null) {
+      cache[value] = true;
+    } else {
+      if (type != 'number' && type != 'string') {
+        type = 'object';
+      }
+      var key = type == 'number' ? value : keyPrefix + value,
+          typeCache = cache[type] || (cache[type] = {});
+
+      if (type == 'object') {
+        (typeCache[key] || (typeCache[key] = [])).push(value);
+      } else {
+        typeCache[key] = true;
+      }
+    }
+  }
+
+  /**
+   * Used by `_.max` and `_.min` as the default callback when a given
+   * collection is a string value.
+   *
+   * @private
+   * @param {string} value The character to inspect.
+   * @returns {number} Returns the code unit of given character.
+   */
+  function charAtCallback(value) {
+    return value.charCodeAt(0);
+  }
+
+  /**
+   * Used by `sortBy` to compare transformed `collection` elements, stable sorting
+   * them in ascending order.
+   *
+   * @private
+   * @param {Object} a The object to compare to `b`.
+   * @param {Object} b The object to compare to `a`.
+   * @returns {number} Returns the sort order indicator of `1` or `-1`.
+   */
+  function compareAscending(a, b) {
+    var ac = a.criteria,
+        bc = b.criteria,
+        index = -1,
+        length = ac.length;
+
+    while (++index < length) {
+      var value = ac[index],
+          other = bc[index];
+
+      if (value !== other) {
+        if (value > other || typeof value == 'undefined') {
+          return 1;
+        }
+        if (value < other || typeof other == 'undefined') {
+          return -1;
+        }
+      }
+    }
+    // Fixes an `Array#sort` bug in the JS engine embedded in Adobe applications
+    // that causes it, under certain circumstances, to return the same value for
+    // `a` and `b`. See https://github.com/jashkenas/underscore/pull/1247
+    //
+    // This also ensures a stable sort in V8 and other engines.
+    // See http://code.google.com/p/v8/issues/detail?id=90
+    return a.index - b.index;
+  }
+
+  /**
+   * Creates a cache object to optimize linear searches of large arrays.
+   *
+   * @private
+   * @param {Array} [array=[]] The array to search.
+   * @returns {null|Object} Returns the cache object or `null` if caching should not be used.
+   */
+  function createCache(array) {
+    var index = -1,
+        length = array.length,
+        first = array[0],
+        mid = array[(length / 2) | 0],
+        last = array[length - 1];
+
+    if (first && typeof first == 'object' &&
+        mid && typeof mid == 'object' && last && typeof last == 'object') {
+      return false;
+    }
+    var cache = getObject();
+    cache['false'] = cache['null'] = cache['true'] = cache['undefined'] = false;
+
+    var result = getObject();
+    result.array = array;
+    result.cache = cache;
+    result.push = cachePush;
+
+    while (++index < length) {
+      result.push(array[index]);
+    }
+    return result;
+  }
+
+  /**
+   * Used by `template` to escape characters for inclusion in compiled
+   * string literals.
+   *
+   * @private
+   * @param {string} match The matched character to escape.
+   * @returns {string} Returns the escaped character.
+   */
+  function escapeStringChar(match) {
+    return '\\' + stringEscapes[match];
+  }
+
+  /**
+   * Gets an array from the array pool or creates a new one if the pool is empty.
+   *
+   * @private
+   * @returns {Array} The array from the pool.
+   */
+  function getArray() {
+    return arrayPool.pop() || [];
+  }
+
+  /**
+   * Gets an object from the object pool or creates a new one if the pool is empty.
+   *
+   * @private
+   * @returns {Object} The object from the pool.
+   */
+  function getObject() {
+    return objectPool.pop() || {
+      'array': null,
+      'cache': null,
+      'criteria': null,
+      'false': false,
+      'index': 0,
+      'null': false,
+      'number': null,
+      'object': null,
+      'push': null,
+      'string': null,
+      'true': false,
+      'undefined': false,
+      'value': null
+    };
+  }
+
+  /**
+   * Releases the given array back to the array pool.
+   *
+   * @private
+   * @param {Array} [array] The array to release.
+   */
+  function releaseArray(array) {
+    array.length = 0;
+    if (arrayPool.length < maxPoolSize) {
+      arrayPool.push(array);
+    }
+  }
+
+  /**
+   * Releases the given object back to the object pool.
+   *
+   * @private
+   * @param {Object} [object] The object to release.
+   */
+  function releaseObject(object) {
+    var cache = object.cache;
+    if (cache) {
+      releaseObject(cache);
+    }
+    object.array = object.cache = object.criteria = object.object = object.number = object.string = object.value = null;
+    if (objectPool.length < maxPoolSize) {
+      objectPool.push(object);
+    }
+  }
+
+  /**
+   * Slices the `collection` from the `start` index up to, but not including,
+   * the `end` index.
+   *
+   * Note: This function is used instead of `Array#slice` to support node lists
+   * in IE < 9 and to ensure dense arrays are returned.
+   *
+   * @private
+   * @param {Array|Object|string} collection The collection to slice.
+   * @param {number} start The start index.
+   * @param {number} end The end index.
+   * @returns {Array} Returns the new array.
+   */
+  function slice(array, start, end) {
+    start || (start = 0);
+    if (typeof end == 'undefined') {
+      end = array ? array.length : 0;
+    }
+    var index = -1,
+        length = end - start || 0,
+        result = Array(length < 0 ? 0 : length);
+
+    while (++index < length) {
+      result[index] = array[start + index];
+    }
+    return result;
+  }
+
+  /*--------------------------------------------------------------------------*/
+
+  /**
+   * Create a new `lodash` function using the given context object.
+   *
+   * @static
+   * @memberOf _
+   * @category Utilities
+   * @param {Object} [context=root] The context object.
+   * @returns {Function} Returns the `lodash` function.
+   */
+  function runInContext(context) {
+    // Avoid issues with some ES3 environments that attempt to use values, named
+    // after built-in constructors like `Object`, for the creation of literals.
+    // ES5 clears this up by stating that literals must use built-in constructors.
+    // See http://es5.github.io/#x11.1.5.
+    context = context ? _.defaults(root.Object(), context, _.pick(root, contextProps)) : root;
+
+    /** Native constructor references */
+    var Array = context.Array,
+        Boolean = context.Boolean,
+        Date = context.Date,
+        Function = context.Function,
+        Math = context.Math,
+        Number = context.Number,
+        Object = context.Object,
+        RegExp = context.RegExp,
+        String = context.String,
+        TypeError = context.TypeError;
+
+    /**
+     * Used for `Array` method references.
+     *
+     * Normally `Array.prototype` would suffice, however, using an array literal
+     * avoids issues in Narwhal.
+     */
+    var arrayRef = [];
+
+    /** Used for native method references */
+    var objectProto = Object.prototype;
+
+    /** Used to restore the original `_` reference in `noConflict` */
+    var oldDash = context._;
+
+    /** Used to resolve the internal [[Class]] of values */
+    var toString = objectProto.toString;
+
+    /** Used to detect if a method is native */
+    var reNative = RegExp('^' +
+      String(toString)
+        .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        .replace(/toString| for [^\]]+/g, '.*?') + '$'
+    );
+
+    /** Native method shortcuts */
+    var ceil = Math.ceil,
+        clearTimeout = context.clearTimeout,
+        floor = Math.floor,
+        fnToString = Function.prototype.toString,
+        getPrototypeOf = isNative(getPrototypeOf = Object.getPrototypeOf) && getPrototypeOf,
+        hasOwnProperty = objectProto.hasOwnProperty,
+        push = arrayRef.push,
+        setTimeout = context.setTimeout,
+        splice = arrayRef.splice,
+        unshift = arrayRef.unshift;
+
+    /** Used to set meta data on functions */
+    var defineProperty = (function() {
+      // IE 8 only accepts DOM elements
+      try {
+        var o = {},
+            func = isNative(func = Object.defineProperty) && func,
+            result = func(o, o, o) && func;
+      } catch(e) { }
+      return result;
+    }());
+
+    /* Native method shortcuts for methods with the same name as other `lodash` methods */
+    var nativeCreate = isNative(nativeCreate = Object.create) && nativeCreate,
+        nativeIsArray = isNative(nativeIsArray = Array.isArray) && nativeIsArray,
+        nativeIsFinite = context.isFinite,
+        nativeIsNaN = context.isNaN,
+        nativeKeys = isNative(nativeKeys = Object.keys) && nativeKeys,
+        nativeMax = Math.max,
+        nativeMin = Math.min,
+        nativeParseInt = context.parseInt,
+        nativeRandom = Math.random;
+
+    /** Used to lookup a built-in constructor by [[Class]] */
+    var ctorByClass = {};
+    ctorByClass[arrayClass] = Array;
+    ctorByClass[boolClass] = Boolean;
+    ctorByClass[dateClass] = Date;
+    ctorByClass[funcClass] = Function;
+    ctorByClass[objectClass] = Object;
+    ctorByClass[numberClass] = Number;
+    ctorByClass[regexpClass] = RegExp;
+    ctorByClass[stringClass] = String;
+
+    /*--------------------------------------------------------------------------*/
+
+    /**
+     * Creates a `lodash` object which wraps the given value to enable intuitive
+     * method chaining.
+     *
+     * In addition to Lo-Dash methods, wrappers also have the following `Array` methods:
+     * `concat`, `join`, `pop`, `push`, `reverse`, `shift`, `slice`, `sort`, `splice`,
+     * and `unshift`
+     *
+     * Chaining is supported in custom builds as long as the `value` method is
+     * implicitly or explicitly included in the build.
+     *
+     * The chainable wrapper functions are:
+     * `after`, `assign`, `bind`, `bindAll`, `bindKey`, `chain`, `compact`,
+     * `compose`, `concat`, `countBy`, `create`, `createCallback`, `curry`,
+     * `debounce`, `defaults`, `defer`, `delay`, `difference`, `filter`, `flatten`,
+     * `forEach`, `forEachRight`, `forIn`, `forInRight`, `forOwn`, `forOwnRight`,
+     * `functions`, `groupBy`, `indexBy`, `initial`, `intersection`, `invert`,
+     * `invoke`, `keys`, `map`, `max`, `memoize`, `merge`, `min`, `object`, `omit`,
+     * `once`, `pairs`, `partial`, `partialRight`, `pick`, `pluck`, `pull`, `push`,
+     * `range`, `reject`, `remove`, `rest`, `reverse`, `shuffle`, `slice`, `sort`,
+     * `sortBy`, `splice`, `tap`, `throttle`, `times`, `toArray`, `transform`,
+     * `union`, `uniq`, `unshift`, `unzip`, `values`, `where`, `without`, `wrap`,
+     * and `zip`
+     *
+     * The non-chainable wrapper functions are:
+     * `clone`, `cloneDeep`, `contains`, `escape`, `every`, `find`, `findIndex`,
+     * `findKey`, `findLast`, `findLastIndex`, `findLastKey`, `has`, `identity`,
+     * `indexOf`, `isArguments`, `isArray`, `isBoolean`, `isDate`, `isElement`,
+     * `isEmpty`, `isEqual`, `isFinite`, `isFunction`, `isNaN`, `isNull`, `isNumber`,
+     * `isObject`, `isPlainObject`, `isRegExp`, `isString`, `isUndefined`, `join`,
+     * `lastIndexOf`, `mixin`, `noConflict`, `parseInt`, `pop`, `random`, `reduce`,
+     * `reduceRight`, `result`, `shift`, `size`, `some`, `sortedIndex`, `runInContext`,
+     * `template`, `unescape`, `uniqueId`, and `value`
+     *
+     * The wrapper functions `first` and `last` return wrapped values when `n` is
+     * provided, otherwise they return unwrapped values.
+     *
+     * Explicit chaining can be enabled by using the `_.chain` method.
+     *
+     * @name _
+     * @constructor
+     * @category Chaining
+     * @param {*} value The value to wrap in a `lodash` instance.
+     * @returns {Object} Returns a `lodash` instance.
+     * @example
+     *
+     * var wrapped = _([1, 2, 3]);
+     *
+     * // returns an unwrapped value
+     * wrapped.reduce(function(sum, num) {
+     *   return sum + num;
+     * });
+     * // => 6
+     *
+     * // returns a wrapped value
+     * var squares = wrapped.map(function(num) {
+     *   return num * num;
+     * });
+     *
+     * _.isArray(squares);
+     * // => false
+     *
+     * _.isArray(squares.value());
+     * // => true
+     */
+    function lodash(value) {
+      // don't wrap if already wrapped, even if wrapped by a different `lodash` constructor
+      return (value && typeof value == 'object' && !isArray(value) && hasOwnProperty.call(value, '__wrapped__'))
+       ? value
+       : new lodashWrapper(value);
+    }
+
+    /**
+     * A fast path for creating `lodash` wrapper objects.
+     *
+     * @private
+     * @param {*} value The value to wrap in a `lodash` instance.
+     * @param {boolean} chainAll A flag to enable chaining for all methods
+     * @returns {Object} Returns a `lodash` instance.
+     */
+    function lodashWrapper(value, chainAll) {
+      this.__chain__ = !!chainAll;
+      this.__wrapped__ = value;
+    }
+    // ensure `new lodashWrapper` is an instance of `lodash`
+    lodashWrapper.prototype = lodash.prototype;
+
+    /**
+     * An object used to flag environments features.
+     *
+     * @static
+     * @memberOf _
+     * @type Object
+     */
+    var support = lodash.support = {};
+
+    /**
+     * Detect if functions can be decompiled by `Function#toString`
+     * (all but PS3 and older Opera mobile browsers & avoided in Windows 8 apps).
+     *
+     * @memberOf _.support
+     * @type boolean
+     */
+    support.funcDecomp = !isNative(context.WinRTError) && reThis.test(runInContext);
+
+    /**
+     * Detect if `Function#name` is supported (all but IE).
+     *
+     * @memberOf _.support
+     * @type boolean
+     */
+    support.funcNames = typeof Function.name == 'string';
+
+    /**
+     * By default, the template delimiters used by Lo-Dash are similar to those in
+     * embedded Ruby (ERB). Change the following template settings to use alternative
+     * delimiters.
+     *
+     * @static
+     * @memberOf _
+     * @type Object
+     */
+    lodash.templateSettings = {
+
+      /**
+       * Used to detect `data` property values to be HTML-escaped.
+       *
+       * @memberOf _.templateSettings
+       * @type RegExp
+       */
+      'escape': /<%-([\s\S]+?)%>/g,
+
+      /**
+       * Used to detect code to be evaluated.
+       *
+       * @memberOf _.templateSettings
+       * @type RegExp
+       */
+      'evaluate': /<%([\s\S]+?)%>/g,
+
+      /**
+       * Used to detect `data` property values to inject.
+       *
+       * @memberOf _.templateSettings
+       * @type RegExp
+       */
+      'interpolate': reInterpolate,
+
+      /**
+       * Used to reference the data object in the template text.
+       *
+       * @memberOf _.templateSettings
+       * @type string
+       */
+      'variable': '',
+
+      /**
+       * Used to import variables into the compiled template.
+       *
+       * @memberOf _.templateSettings
+       * @type Object
+       */
+      'imports': {
+
+        /**
+         * A reference to the `lodash` function.
+         *
+         * @memberOf _.templateSettings.imports
+         * @type Function
+         */
+        '_': lodash
+      }
+    };
+
+    /*--------------------------------------------------------------------------*/
+
+    /**
+     * The base implementation of `_.bind` that creates the bound function and
+     * sets its meta data.
+     *
+     * @private
+     * @param {Array} bindData The bind data array.
+     * @returns {Function} Returns the new bound function.
+     */
+    function baseBind(bindData) {
+      var func = bindData[0],
+          partialArgs = bindData[2],
+          thisArg = bindData[4];
+
+      function bound() {
+        // `Function#bind` spec
+        // http://es5.github.io/#x15.3.4.5
+        if (partialArgs) {
+          // avoid `arguments` object deoptimizations by using `slice` instead
+          // of `Array.prototype.slice.call` and not assigning `arguments` to a
+          // variable as a ternary expression
+          var args = slice(partialArgs);
+          push.apply(args, arguments);
+        }
+        // mimic the constructor's `return` behavior
+        // http://es5.github.io/#x13.2.2
+        if (this instanceof bound) {
+          // ensure `new bound` is an instance of `func`
+          var thisBinding = baseCreate(func.prototype),
+              result = func.apply(thisBinding, args || arguments);
+          return isObject(result) ? result : thisBinding;
+        }
+        return func.apply(thisArg, args || arguments);
+      }
+      setBindData(bound, bindData);
+      return bound;
+    }
+
+    /**
+     * The base implementation of `_.clone` without argument juggling or support
+     * for `thisArg` binding.
+     *
+     * @private
+     * @param {*} value The value to clone.
+     * @param {boolean} [isDeep=false] Specify a deep clone.
+     * @param {Function} [callback] The function to customize cloning values.
+     * @param {Array} [stackA=[]] Tracks traversed source objects.
+     * @param {Array} [stackB=[]] Associates clones with source counterparts.
+     * @returns {*} Returns the cloned value.
+     */
+    function baseClone(value, isDeep, callback, stackA, stackB) {
+      if (callback) {
+        var result = callback(value);
+        if (typeof result != 'undefined') {
+          return result;
+        }
+      }
+      // inspect [[Class]]
+      var isObj = isObject(value);
+      if (isObj) {
+        var className = toString.call(value);
+        if (!cloneableClasses[className]) {
+          return value;
+        }
+        var ctor = ctorByClass[className];
+        switch (className) {
+          case boolClass:
+          case dateClass:
+            return new ctor(+value);
+
+          case numberClass:
+          case stringClass:
+            return new ctor(value);
+
+          case regexpClass:
+            result = ctor(value.source, reFlags.exec(value));
+            result.lastIndex = value.lastIndex;
+            return result;
+        }
+      } else {
+        return value;
+      }
+      var isArr = isArray(value);
+      if (isDeep) {
+        // check for circular references and return corresponding clone
+        var initedStack = !stackA;
+        stackA || (stackA = getArray());
+        stackB || (stackB = getArray());
+
+        var length = stackA.length;
+        while (length--) {
+          if (stackA[length] == value) {
+            return stackB[length];
+          }
+        }
+        result = isArr ? ctor(value.length) : {};
+      }
+      else {
+        result = isArr ? slice(value) : assign({}, value);
+      }
+      // add array properties assigned by `RegExp#exec`
+      if (isArr) {
+        if (hasOwnProperty.call(value, 'index')) {
+          result.index = value.index;
+        }
+        if (hasOwnProperty.call(value, 'input')) {
+          result.input = value.input;
+        }
+      }
+      // exit for shallow clone
+      if (!isDeep) {
+        return result;
+      }
+      // add the source value to the stack of traversed objects
+      // and associate it with its clone
+      stackA.push(value);
+      stackB.push(result);
+
+      // recursively populate clone (susceptible to call stack limits)
+      (isArr ? forEach : forOwn)(value, function(objValue, key) {
+        result[key] = baseClone(objValue, isDeep, callback, stackA, stackB);
+      });
+
+      if (initedStack) {
+        releaseArray(stackA);
+        releaseArray(stackB);
+      }
+      return result;
+    }
+
+    /**
+     * The base implementation of `_.create` without support for assigning
+     * properties to the created object.
+     *
+     * @private
+     * @param {Object} prototype The object to inherit from.
+     * @returns {Object} Returns the new object.
+     */
+    function baseCreate(prototype, properties) {
+      return isObject(prototype) ? nativeCreate(prototype) : {};
+    }
+    // fallback for browsers without `Object.create`
+    if (!nativeCreate) {
+      baseCreate = (function() {
+        function Object() {}
+        return function(prototype) {
+          if (isObject(prototype)) {
+            Object.prototype = prototype;
+            var result = new Object;
+            Object.prototype = null;
+          }
+          return result || context.Object();
+        };
+      }());
+    }
+
+    /**
+     * The base implementation of `_.createCallback` without support for creating
+     * "_.pluck" or "_.where" style callbacks.
+     *
+     * @private
+     * @param {*} [func=identity] The value to convert to a callback.
+     * @param {*} [thisArg] The `this` binding of the created callback.
+     * @param {number} [argCount] The number of arguments the callback accepts.
+     * @returns {Function} Returns a callback function.
+     */
+    function baseCreateCallback(func, thisArg, argCount) {
+      if (typeof func != 'function') {
+        return identity;
+      }
+      // exit early for no `thisArg` or already bound by `Function#bind`
+      if (typeof thisArg == 'undefined' || !('prototype' in func)) {
+        return func;
+      }
+      var bindData = func.__bindData__;
+      if (typeof bindData == 'undefined') {
+        if (support.funcNames) {
+          bindData = !func.name;
+        }
+        bindData = bindData || !support.funcDecomp;
+        if (!bindData) {
+          var source = fnToString.call(func);
+          if (!support.funcNames) {
+            bindData = !reFuncName.test(source);
+          }
+          if (!bindData) {
+            // checks if `func` references the `this` keyword and stores the result
+            bindData = reThis.test(source);
+            setBindData(func, bindData);
+          }
+        }
+      }
+      // exit early if there are no `this` references or `func` is bound
+      if (bindData === false || (bindData !== true && bindData[1] & 1)) {
+        return func;
+      }
+      switch (argCount) {
+        case 1: return function(value) {
+          return func.call(thisArg, value);
+        };
+        case 2: return function(a, b) {
+          return func.call(thisArg, a, b);
+        };
+        case 3: return function(value, index, collection) {
+          return func.call(thisArg, value, index, collection);
+        };
+        case 4: return function(accumulator, value, index, collection) {
+          return func.call(thisArg, accumulator, value, index, collection);
+        };
+      }
+      return bind(func, thisArg);
+    }
+
+    /**
+     * The base implementation of `createWrapper` that creates the wrapper and
+     * sets its meta data.
+     *
+     * @private
+     * @param {Array} bindData The bind data array.
+     * @returns {Function} Returns the new function.
+     */
+    function baseCreateWrapper(bindData) {
+      var func = bindData[0],
+          bitmask = bindData[1],
+          partialArgs = bindData[2],
+          partialRightArgs = bindData[3],
+          thisArg = bindData[4],
+          arity = bindData[5];
+
+      var isBind = bitmask & 1,
+          isBindKey = bitmask & 2,
+          isCurry = bitmask & 4,
+          isCurryBound = bitmask & 8,
+          key = func;
+
+      function bound() {
+        var thisBinding = isBind ? thisArg : this;
+        if (partialArgs) {
+          var args = slice(partialArgs);
+          push.apply(args, arguments);
+        }
+        if (partialRightArgs || isCurry) {
+          args || (args = slice(arguments));
+          if (partialRightArgs) {
+            push.apply(args, partialRightArgs);
+          }
+          if (isCurry && args.length < arity) {
+            bitmask |= 16 & ~32;
+            return baseCreateWrapper([func, (isCurryBound ? bitmask : bitmask & ~3), args, null, thisArg, arity]);
+          }
+        }
+        args || (args = arguments);
+        if (isBindKey) {
+          func = thisBinding[key];
+        }
+        if (this instanceof bound) {
+          thisBinding = baseCreate(func.prototype);
+          var result = func.apply(thisBinding, args);
+          return isObject(result) ? result : thisBinding;
+        }
+        return func.apply(thisBinding, args);
+      }
+      setBindData(bound, bindData);
+      return bound;
+    }
+
+    /**
+     * The base implementation of `_.difference` that accepts a single array
+     * of values to exclude.
+     *
+     * @private
+     * @param {Array} array The array to process.
+     * @param {Array} [values] The array of values to exclude.
+     * @returns {Array} Returns a new array of filtered values.
+     */
+    function baseDifference(array, values) {
+      var index = -1,
+          indexOf = getIndexOf(),
+          length = array ? array.length : 0,
+          isLarge = length >= largeArraySize && indexOf === baseIndexOf,
+          result = [];
+
+      if (isLarge) {
+        var cache = createCache(values);
+        if (cache) {
+          indexOf = cacheIndexOf;
+          values = cache;
+        } else {
+          isLarge = false;
+        }
+      }
+      while (++index < length) {
+        var value = array[index];
+        if (indexOf(values, value) < 0) {
+          result.push(value);
+        }
+      }
+      if (isLarge) {
+        releaseObject(values);
+      }
+      return result;
+    }
+
+    /**
+     * The base implementation of `_.flatten` without support for callback
+     * shorthands or `thisArg` binding.
+     *
+     * @private
+     * @param {Array} array The array to flatten.
+     * @param {boolean} [isShallow=false] A flag to restrict flattening to a single level.
+     * @param {boolean} [isStrict=false] A flag to restrict flattening to arrays and `arguments` objects.
+     * @param {number} [fromIndex=0] The index to start from.
+     * @returns {Array} Returns a new flattened array.
+     */
+    function baseFlatten(array, isShallow, isStrict, fromIndex) {
+      var index = (fromIndex || 0) - 1,
+          length = array ? array.length : 0,
+          result = [];
+
+      while (++index < length) {
+        var value = array[index];
+
+        if (value && typeof value == 'object' && typeof value.length == 'number'
+            && (isArray(value) || isArguments(value))) {
+          // recursively flatten arrays (susceptible to call stack limits)
+          if (!isShallow) {
+            value = baseFlatten(value, isShallow, isStrict);
+          }
+          var valIndex = -1,
+              valLength = value.length,
+              resIndex = result.length;
+
+          result.length += valLength;
+          while (++valIndex < valLength) {
+            result[resIndex++] = value[valIndex];
+          }
+        } else if (!isStrict) {
+          result.push(value);
+        }
+      }
+      return result;
+    }
+
+    /**
+     * The base implementation of `_.isEqual`, without support for `thisArg` binding,
+     * that allows partial "_.where" style comparisons.
+     *
+     * @private
+     * @param {*} a The value to compare.
+     * @param {*} b The other value to compare.
+     * @param {Function} [callback] The function to customize comparing values.
+     * @param {Function} [isWhere=false] A flag to indicate performing partial comparisons.
+     * @param {Array} [stackA=[]] Tracks traversed `a` objects.
+     * @param {Array} [stackB=[]] Tracks traversed `b` objects.
+     * @returns {boolean} Returns `true` if the values are equivalent, else `false`.
+     */
+    function baseIsEqual(a, b, callback, isWhere, stackA, stackB) {
+      // used to indicate that when comparing objects, `a` has at least the properties of `b`
+      if (callback) {
+        var result = callback(a, b);
+        if (typeof result != 'undefined') {
+          return !!result;
+        }
+      }
+      // exit early for identical values
+      if (a === b) {
+        // treat `+0` vs. `-0` as not equal
+        return a !== 0 || (1 / a == 1 / b);
+      }
+      var type = typeof a,
+          otherType = typeof b;
+
+      // exit early for unlike primitive values
+      if (a === a &&
+          !(a && objectTypes[type]) &&
+          !(b && objectTypes[otherType])) {
+        return false;
+      }
+      // exit early for `null` and `undefined` avoiding ES3's Function#call behavior
+      // http://es5.github.io/#x15.3.4.4
+      if (a == null || b == null) {
+        return a === b;
+      }
+      // compare [[Class]] names
+      var className = toString.call(a),
+          otherClass = toString.call(b);
+
+      if (className == argsClass) {
+        className = objectClass;
+      }
+      if (otherClass == argsClass) {
+        otherClass = objectClass;
+      }
+      if (className != otherClass) {
+        return false;
+      }
+      switch (className) {
+        case boolClass:
+        case dateClass:
+          // coerce dates and booleans to numbers, dates to milliseconds and booleans
+          // to `1` or `0` treating invalid dates coerced to `NaN` as not equal
+          return +a == +b;
+
+        case numberClass:
+          // treat `NaN` vs. `NaN` as equal
+          return (a != +a)
+            ? b != +b
+            // but treat `+0` vs. `-0` as not equal
+            : (a == 0 ? (1 / a == 1 / b) : a == +b);
+
+        case regexpClass:
+        case stringClass:
+          // coerce regexes to strings (http://es5.github.io/#x15.10.6.4)
+          // treat string primitives and their corresponding object instances as equal
+          return a == String(b);
+      }
+      var isArr = className == arrayClass;
+      if (!isArr) {
+        // unwrap any `lodash` wrapped values
+        var aWrapped = hasOwnProperty.call(a, '__wrapped__'),
+            bWrapped = hasOwnProperty.call(b, '__wrapped__');
+
+        if (aWrapped || bWrapped) {
+          return baseIsEqual(aWrapped ? a.__wrapped__ : a, bWrapped ? b.__wrapped__ : b, callback, isWhere, stackA, stackB);
+        }
+        // exit for functions and DOM nodes
+        if (className != objectClass) {
+          return false;
+        }
+        // in older versions of Opera, `arguments` objects have `Array` constructors
+        var ctorA = a.constructor,
+            ctorB = b.constructor;
+
+        // non `Object` object instances with different constructors are not equal
+        if (ctorA != ctorB &&
+              !(isFunction(ctorA) && ctorA instanceof ctorA && isFunction(ctorB) && ctorB instanceof ctorB) &&
+              ('constructor' in a && 'constructor' in b)
+            ) {
+          return false;
+        }
+      }
+      // assume cyclic structures are equal
+      // the algorithm for detecting cyclic structures is adapted from ES 5.1
+      // section 15.12.3, abstract operation `JO` (http://es5.github.io/#x15.12.3)
+      var initedStack = !stackA;
+      stackA || (stackA = getArray());
+      stackB || (stackB = getArray());
+
+      var length = stackA.length;
+      while (length--) {
+        if (stackA[length] == a) {
+          return stackB[length] == b;
+        }
+      }
+      var size = 0;
+      result = true;
+
+      // add `a` and `b` to the stack of traversed objects
+      stackA.push(a);
+      stackB.push(b);
+
+      // recursively compare objects and arrays (susceptible to call stack limits)
+      if (isArr) {
+        // compare lengths to determine if a deep comparison is necessary
+        length = a.length;
+        size = b.length;
+        result = size == length;
+
+        if (result || isWhere) {
+          // deep compare the contents, ignoring non-numeric properties
+          while (size--) {
+            var index = length,
+                value = b[size];
+
+            if (isWhere) {
+              while (index--) {
+                if ((result = baseIsEqual(a[index], value, callback, isWhere, stackA, stackB))) {
+                  break;
+                }
+              }
+            } else if (!(result = baseIsEqual(a[size], value, callback, isWhere, stackA, stackB))) {
+              break;
+            }
+          }
+        }
+      }
+      else {
+        // deep compare objects using `forIn`, instead of `forOwn`, to avoid `Object.keys`
+        // which, in this case, is more costly
+        forIn(b, function(value, key, b) {
+          if (hasOwnProperty.call(b, key)) {
+            // count the number of properties.
+            size++;
+            // deep compare each property value.
+            return (result = hasOwnProperty.call(a, key) && baseIsEqual(a[key], value, callback, isWhere, stackA, stackB));
+          }
+        });
+
+        if (result && !isWhere) {
+          // ensure both objects have the same number of properties
+          forIn(a, function(value, key, a) {
+            if (hasOwnProperty.call(a, key)) {
+              // `size` will be `-1` if `a` has more properties than `b`
+              return (result = --size > -1);
+            }
+          });
+        }
+      }
+      stackA.pop();
+      stackB.pop();
+
+      if (initedStack) {
+        releaseArray(stackA);
+        releaseArray(stackB);
+      }
+      return result;
+    }
+
+    /**
+     * The base implementation of `_.merge` without argument juggling or support
+     * for `thisArg` binding.
+     *
+     * @private
+     * @param {Object} object The destination object.
+     * @param {Object} source The source object.
+     * @param {Function} [callback] The function to customize merging properties.
+     * @param {Array} [stackA=[]] Tracks traversed source objects.
+     * @param {Array} [stackB=[]] Associates values with source counterparts.
+     */
+    function baseMerge(object, source, callback, stackA, stackB) {
+      (isArray(source) ? forEach : forOwn)(source, function(source, key) {
+        var found,
+            isArr,
+            result = source,
+            value = object[key];
+
+        if (source && ((isArr = isArray(source)) || isPlainObject(source))) {
+          // avoid merging previously merged cyclic sources
+          var stackLength = stackA.length;
+          while (stackLength--) {
+            if ((found = stackA[stackLength] == source)) {
+              value = stackB[stackLength];
+              break;
+            }
+          }
+          if (!found) {
+            var isShallow;
+            if (callback) {
+              result = callback(value, source);
+              if ((isShallow = typeof result != 'undefined')) {
+                value = result;
+              }
+            }
+            if (!isShallow) {
+              value = isArr
+                ? (isArray(value) ? value : [])
+                : (isPlainObject(value) ? value : {});
+            }
+            // add `source` and associated `value` to the stack of traversed objects
+            stackA.push(source);
+            stackB.push(value);
+
+            // recursively merge objects and arrays (susceptible to call stack limits)
+            if (!isShallow) {
+              baseMerge(value, source, callback, stackA, stackB);
+            }
+          }
+        }
+        else {
+          if (callback) {
+            result = callback(value, source);
+            if (typeof result == 'undefined') {
+              result = source;
+            }
+          }
+          if (typeof result != 'undefined') {
+            value = result;
+          }
+        }
+        object[key] = value;
+      });
+    }
+
+    /**
+     * The base implementation of `_.random` without argument juggling or support
+     * for returning floating-point numbers.
+     *
+     * @private
+     * @param {number} min The minimum possible value.
+     * @param {number} max The maximum possible value.
+     * @returns {number} Returns a random number.
+     */
+    function baseRandom(min, max) {
+      return min + floor(nativeRandom() * (max - min + 1));
+    }
+
+    /**
+     * The base implementation of `_.uniq` without support for callback shorthands
+     * or `thisArg` binding.
+     *
+     * @private
+     * @param {Array} array The array to process.
+     * @param {boolean} [isSorted=false] A flag to indicate that `array` is sorted.
+     * @param {Function} [callback] The function called per iteration.
+     * @returns {Array} Returns a duplicate-value-free array.
+     */
+    function baseUniq(array, isSorted, callback) {
+      var index = -1,
+          indexOf = getIndexOf(),
+          length = array ? array.length : 0,
+          result = [];
+
+      var isLarge = !isSorted && length >= largeArraySize && indexOf === baseIndexOf,
+          seen = (callback || isLarge) ? getArray() : result;
+
+      if (isLarge) {
+        var cache = createCache(seen);
+        indexOf = cacheIndexOf;
+        seen = cache;
+      }
+      while (++index < length) {
+        var value = array[index],
+            computed = callback ? callback(value, index, array) : value;
+
+        if (isSorted
+              ? !index || seen[seen.length - 1] !== computed
+              : indexOf(seen, computed) < 0
+            ) {
+          if (callback || isLarge) {
+            seen.push(computed);
+          }
+          result.push(value);
+        }
+      }
+      if (isLarge) {
+        releaseArray(seen.array);
+        releaseObject(seen);
+      } else if (callback) {
+        releaseArray(seen);
+      }
+      return result;
+    }
+
+    /**
+     * Creates a function that aggregates a collection, creating an object composed
+     * of keys generated from the results of running each element of the collection
+     * through a callback. The given `setter` function sets the keys and values
+     * of the composed object.
+     *
+     * @private
+     * @param {Function} setter The setter function.
+     * @returns {Function} Returns the new aggregator function.
+     */
+    function createAggregator(setter) {
+      return function(collection, callback, thisArg) {
+        var result = {};
+        callback = lodash.createCallback(callback, thisArg, 3);
+
+        var index = -1,
+            length = collection ? collection.length : 0;
+
+        if (typeof length == 'number') {
+          while (++index < length) {
+            var value = collection[index];
+            setter(result, value, callback(value, index, collection), collection);
+          }
+        } else {
+          forOwn(collection, function(value, key, collection) {
+            setter(result, value, callback(value, key, collection), collection);
+          });
+        }
+        return result;
+      };
+    }
+
+    /**
+     * Creates a function that, when called, either curries or invokes `func`
+     * with an optional `this` binding and partially applied arguments.
+     *
+     * @private
+     * @param {Function|string} func The function or method name to reference.
+     * @param {number} bitmask The bitmask of method flags to compose.
+     *  The bitmask may be composed of the following flags:
+     *  1 - `_.bind`
+     *  2 - `_.bindKey`
+     *  4 - `_.curry`
+     *  8 - `_.curry` (bound)
+     *  16 - `_.partial`
+     *  32 - `_.partialRight`
+     * @param {Array} [partialArgs] An array of arguments to prepend to those
+     *  provided to the new function.
+     * @param {Array} [partialRightArgs] An array of arguments to append to those
+     *  provided to the new function.
+     * @param {*} [thisArg] The `this` binding of `func`.
+     * @param {number} [arity] The arity of `func`.
+     * @returns {Function} Returns the new function.
+     */
+    function createWrapper(func, bitmask, partialArgs, partialRightArgs, thisArg, arity) {
+      var isBind = bitmask & 1,
+          isBindKey = bitmask & 2,
+          isCurry = bitmask & 4,
+          isCurryBound = bitmask & 8,
+          isPartial = bitmask & 16,
+          isPartialRight = bitmask & 32;
+
+      if (!isBindKey && !isFunction(func)) {
+        throw new TypeError;
+      }
+      if (isPartial && !partialArgs.length) {
+        bitmask &= ~16;
+        isPartial = partialArgs = false;
+      }
+      if (isPartialRight && !partialRightArgs.length) {
+        bitmask &= ~32;
+        isPartialRight = partialRightArgs = false;
+      }
+      var bindData = func && func.__bindData__;
+      if (bindData && bindData !== true) {
+        // clone `bindData`
+        bindData = slice(bindData);
+        if (bindData[2]) {
+          bindData[2] = slice(bindData[2]);
+        }
+        if (bindData[3]) {
+          bindData[3] = slice(bindData[3]);
+        }
+        // set `thisBinding` is not previously bound
+        if (isBind && !(bindData[1] & 1)) {
+          bindData[4] = thisArg;
+        }
+        // set if previously bound but not currently (subsequent curried functions)
+        if (!isBind && bindData[1] & 1) {
+          bitmask |= 8;
+        }
+        // set curried arity if not yet set
+        if (isCurry && !(bindData[1] & 4)) {
+          bindData[5] = arity;
+        }
+        // append partial left arguments
+        if (isPartial) {
+          push.apply(bindData[2] || (bindData[2] = []), partialArgs);
+        }
+        // append partial right arguments
+        if (isPartialRight) {
+          unshift.apply(bindData[3] || (bindData[3] = []), partialRightArgs);
+        }
+        // merge flags
+        bindData[1] |= bitmask;
+        return createWrapper.apply(null, bindData);
+      }
+      // fast path for `_.bind`
+      var creater = (bitmask == 1 || bitmask === 17) ? baseBind : baseCreateWrapper;
+      return creater([func, bitmask, partialArgs, partialRightArgs, thisArg, arity]);
+    }
+
+    /**
+     * Used by `escape` to convert characters to HTML entities.
+     *
+     * @private
+     * @param {string} match The matched character to escape.
+     * @returns {string} Returns the escaped character.
+     */
+    function escapeHtmlChar(match) {
+      return htmlEscapes[match];
+    }
+
+    /**
+     * Gets the appropriate "indexOf" function. If the `_.indexOf` method is
+     * customized, this method returns the custom method, otherwise it returns
+     * the `baseIndexOf` function.
+     *
+     * @private
+     * @returns {Function} Returns the "indexOf" function.
+     */
+    function getIndexOf() {
+      var result = (result = lodash.indexOf) === indexOf ? baseIndexOf : result;
+      return result;
+    }
+
+    /**
+     * Checks if `value` is a native function.
+     *
+     * @private
+     * @param {*} value The value to check.
+     * @returns {boolean} Returns `true` if the `value` is a native function, else `false`.
+     */
+    function isNative(value) {
+      return typeof value == 'function' && reNative.test(value);
+    }
+
+    /**
+     * Sets `this` binding data on a given function.
+     *
+     * @private
+     * @param {Function} func The function to set data on.
+     * @param {Array} value The data array to set.
+     */
+    var setBindData = !defineProperty ? noop : function(func, value) {
+      descriptor.value = value;
+      defineProperty(func, '__bindData__', descriptor);
+      descriptor.value = null;
+    };
+
+    /**
+     * A fallback implementation of `isPlainObject` which checks if a given value
+     * is an object created by the `Object` constructor, assuming objects created
+     * by the `Object` constructor have no inherited enumerable properties and that
+     * there are no `Object.prototype` extensions.
+     *
+     * @private
+     * @param {*} value The value to check.
+     * @returns {boolean} Returns `true` if `value` is a plain object, else `false`.
+     */
+    function shimIsPlainObject(value) {
+      var ctor,
+          result;
+
+      // avoid non Object objects, `arguments` objects, and DOM elements
+      if (!(value && toString.call(value) == objectClass) ||
+          (ctor = value.constructor, isFunction(ctor) && !(ctor instanceof ctor))) {
+        return false;
+      }
+      // In most environments an object's own properties are iterated before
+      // its inherited properties. If the last iterated property is an object's
+      // own property then there are no inherited enumerable properties.
+      forIn(value, function(value, key) {
+        result = key;
+      });
+      return typeof result == 'undefined' || hasOwnProperty.call(value, result);
+    }
+
+    /**
+     * Used by `unescape` to convert HTML entities to characters.
+     *
+     * @private
+     * @param {string} match The matched character to unescape.
+     * @returns {string} Returns the unescaped character.
+     */
+    function unescapeHtmlChar(match) {
+      return htmlUnescapes[match];
+    }
+
+    /*--------------------------------------------------------------------------*/
+
+    /**
+     * Checks if `value` is an `arguments` object.
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {*} value The value to check.
+     * @returns {boolean} Returns `true` if the `value` is an `arguments` object, else `false`.
+     * @example
+     *
+     * (function() { return _.isArguments(arguments); })(1, 2, 3);
+     * // => true
+     *
+     * _.isArguments([1, 2, 3]);
+     * // => false
+     */
+    function isArguments(value) {
+      return value && typeof value == 'object' && typeof value.length == 'number' &&
+        toString.call(value) == argsClass || false;
+    }
+
+    /**
+     * Checks if `value` is an array.
+     *
+     * @static
+     * @memberOf _
+     * @type Function
+     * @category Objects
+     * @param {*} value The value to check.
+     * @returns {boolean} Returns `true` if the `value` is an array, else `false`.
+     * @example
+     *
+     * (function() { return _.isArray(arguments); })();
+     * // => false
+     *
+     * _.isArray([1, 2, 3]);
+     * // => true
+     */
+    var isArray = nativeIsArray || function(value) {
+      return value && typeof value == 'object' && typeof value.length == 'number' &&
+        toString.call(value) == arrayClass || false;
+    };
+
+    /**
+     * A fallback implementation of `Object.keys` which produces an array of the
+     * given object's own enumerable property names.
+     *
+     * @private
+     * @type Function
+     * @param {Object} object The object to inspect.
+     * @returns {Array} Returns an array of property names.
+     */
+    var shimKeys = function(object) {
+      var index, iterable = object, result = [];
+      if (!iterable) return result;
+      if (!(objectTypes[typeof object])) return result;
+        for (index in iterable) {
+          if (hasOwnProperty.call(iterable, index)) {
+            result.push(index);
+          }
+        }
+      return result
+    };
+
+    /**
+     * Creates an array composed of the own enumerable property names of an object.
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {Object} object The object to inspect.
+     * @returns {Array} Returns an array of property names.
+     * @example
+     *
+     * _.keys({ 'one': 1, 'two': 2, 'three': 3 });
+     * // => ['one', 'two', 'three'] (property order is not guaranteed across environments)
+     */
+    var keys = !nativeKeys ? shimKeys : function(object) {
+      if (!isObject(object)) {
+        return [];
+      }
+      return nativeKeys(object);
+    };
+
+    /**
+     * Used to convert characters to HTML entities:
+     *
+     * Though the `>` character is escaped for symmetry, characters like `>` and `/`
+     * don't require escaping in HTML and have no special meaning unless they're part
+     * of a tag or an unquoted attribute value.
+     * http://mathiasbynens.be/notes/ambiguous-ampersands (under "semi-related fun fact")
+     */
+    var htmlEscapes = {
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;'
+    };
+
+    /** Used to convert HTML entities to characters */
+    var htmlUnescapes = invert(htmlEscapes);
+
+    /** Used to match HTML entities and HTML characters */
+    var reEscapedHtml = RegExp('(' + keys(htmlUnescapes).join('|') + ')', 'g'),
+        reUnescapedHtml = RegExp('[' + keys(htmlEscapes).join('') + ']', 'g');
+
+    /*--------------------------------------------------------------------------*/
+
+    /**
+     * Assigns own enumerable properties of source object(s) to the destination
+     * object. Subsequent sources will overwrite property assignments of previous
+     * sources. If a callback is provided it will be executed to produce the
+     * assigned values. The callback is bound to `thisArg` and invoked with two
+     * arguments; (objectValue, sourceValue).
+     *
+     * @static
+     * @memberOf _
+     * @type Function
+     * @alias extend
+     * @category Objects
+     * @param {Object} object The destination object.
+     * @param {...Object} [source] The source objects.
+     * @param {Function} [callback] The function to customize assigning values.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {Object} Returns the destination object.
+     * @example
+     *
+     * _.assign({ 'name': 'fred' }, { 'employer': 'slate' });
+     * // => { 'name': 'fred', 'employer': 'slate' }
+     *
+     * var defaults = _.partialRight(_.assign, function(a, b) {
+     *   return typeof a == 'undefined' ? b : a;
+     * });
+     *
+     * var object = { 'name': 'barney' };
+     * defaults(object, { 'name': 'fred', 'employer': 'slate' });
+     * // => { 'name': 'barney', 'employer': 'slate' }
+     */
+    var assign = function(object, source, guard) {
+      var index, iterable = object, result = iterable;
+      if (!iterable) return result;
+      var args = arguments,
+          argsIndex = 0,
+          argsLength = typeof guard == 'number' ? 2 : args.length;
+      if (argsLength > 3 && typeof args[argsLength - 2] == 'function') {
+        var callback = baseCreateCallback(args[--argsLength - 1], args[argsLength--], 2);
+      } else if (argsLength > 2 && typeof args[argsLength - 1] == 'function') {
+        callback = args[--argsLength];
+      }
+      while (++argsIndex < argsLength) {
+        iterable = args[argsIndex];
+        if (iterable && objectTypes[typeof iterable]) {
+        var ownIndex = -1,
+            ownProps = objectTypes[typeof iterable] && keys(iterable),
+            length = ownProps ? ownProps.length : 0;
+
+        while (++ownIndex < length) {
+          index = ownProps[ownIndex];
+          result[index] = callback ? callback(result[index], iterable[index]) : iterable[index];
+        }
+        }
+      }
+      return result
+    };
+
+    /**
+     * Creates a clone of `value`. If `isDeep` is `true` nested objects will also
+     * be cloned, otherwise they will be assigned by reference. If a callback
+     * is provided it will be executed to produce the cloned values. If the
+     * callback returns `undefined` cloning will be handled by the method instead.
+     * The callback is bound to `thisArg` and invoked with one argument; (value).
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {*} value The value to clone.
+     * @param {boolean} [isDeep=false] Specify a deep clone.
+     * @param {Function} [callback] The function to customize cloning values.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {*} Returns the cloned value.
+     * @example
+     *
+     * var characters = [
+     *   { 'name': 'barney', 'age': 36 },
+     *   { 'name': 'fred',   'age': 40 }
+     * ];
+     *
+     * var shallow = _.clone(characters);
+     * shallow[0] === characters[0];
+     * // => true
+     *
+     * var deep = _.clone(characters, true);
+     * deep[0] === characters[0];
+     * // => false
+     *
+     * _.mixin({
+     *   'clone': _.partialRight(_.clone, function(value) {
+     *     return _.isElement(value) ? value.cloneNode(false) : undefined;
+     *   })
+     * });
+     *
+     * var clone = _.clone(document.body);
+     * clone.childNodes.length;
+     * // => 0
+     */
+    function clone(value, isDeep, callback, thisArg) {
+      // allows working with "Collections" methods without using their `index`
+      // and `collection` arguments for `isDeep` and `callback`
+      if (typeof isDeep != 'boolean' && isDeep != null) {
+        thisArg = callback;
+        callback = isDeep;
+        isDeep = false;
+      }
+      return baseClone(value, isDeep, typeof callback == 'function' && baseCreateCallback(callback, thisArg, 1));
+    }
+
+    /**
+     * Creates a deep clone of `value`. If a callback is provided it will be
+     * executed to produce the cloned values. If the callback returns `undefined`
+     * cloning will be handled by the method instead. The callback is bound to
+     * `thisArg` and invoked with one argument; (value).
+     *
+     * Note: This method is loosely based on the structured clone algorithm. Functions
+     * and DOM nodes are **not** cloned. The enumerable properties of `arguments` objects and
+     * objects created by constructors other than `Object` are cloned to plain `Object` objects.
+     * See http://www.w3.org/TR/html5/infrastructure.html#internal-structured-cloning-algorithm.
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {*} value The value to deep clone.
+     * @param {Function} [callback] The function to customize cloning values.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {*} Returns the deep cloned value.
+     * @example
+     *
+     * var characters = [
+     *   { 'name': 'barney', 'age': 36 },
+     *   { 'name': 'fred',   'age': 40 }
+     * ];
+     *
+     * var deep = _.cloneDeep(characters);
+     * deep[0] === characters[0];
+     * // => false
+     *
+     * var view = {
+     *   'label': 'docs',
+     *   'node': element
+     * };
+     *
+     * var clone = _.cloneDeep(view, function(value) {
+     *   return _.isElement(value) ? value.cloneNode(true) : undefined;
+     * });
+     *
+     * clone.node == view.node;
+     * // => false
+     */
+    function cloneDeep(value, callback, thisArg) {
+      return baseClone(value, true, typeof callback == 'function' && baseCreateCallback(callback, thisArg, 1));
+    }
+
+    /**
+     * Creates an object that inherits from the given `prototype` object. If a
+     * `properties` object is provided its own enumerable properties are assigned
+     * to the created object.
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {Object} prototype The object to inherit from.
+     * @param {Object} [properties] The properties to assign to the object.
+     * @returns {Object} Returns the new object.
+     * @example
+     *
+     * function Shape() {
+     *   this.x = 0;
+     *   this.y = 0;
+     * }
+     *
+     * function Circle() {
+     *   Shape.call(this);
+     * }
+     *
+     * Circle.prototype = _.create(Shape.prototype, { 'constructor': Circle });
+     *
+     * var circle = new Circle;
+     * circle instanceof Circle;
+     * // => true
+     *
+     * circle instanceof Shape;
+     * // => true
+     */
+    function create(prototype, properties) {
+      var result = baseCreate(prototype);
+      return properties ? assign(result, properties) : result;
+    }
+
+    /**
+     * Assigns own enumerable properties of source object(s) to the destination
+     * object for all destination properties that resolve to `undefined`. Once a
+     * property is set, additional defaults of the same property will be ignored.
+     *
+     * @static
+     * @memberOf _
+     * @type Function
+     * @category Objects
+     * @param {Object} object The destination object.
+     * @param {...Object} [source] The source objects.
+     * @param- {Object} [guard] Allows working with `_.reduce` without using its
+     *  `key` and `object` arguments as sources.
+     * @returns {Object} Returns the destination object.
+     * @example
+     *
+     * var object = { 'name': 'barney' };
+     * _.defaults(object, { 'name': 'fred', 'employer': 'slate' });
+     * // => { 'name': 'barney', 'employer': 'slate' }
+     */
+    var defaults = function(object, source, guard) {
+      var index, iterable = object, result = iterable;
+      if (!iterable) return result;
+      var args = arguments,
+          argsIndex = 0,
+          argsLength = typeof guard == 'number' ? 2 : args.length;
+      while (++argsIndex < argsLength) {
+        iterable = args[argsIndex];
+        if (iterable && objectTypes[typeof iterable]) {
+        var ownIndex = -1,
+            ownProps = objectTypes[typeof iterable] && keys(iterable),
+            length = ownProps ? ownProps.length : 0;
+
+        while (++ownIndex < length) {
+          index = ownProps[ownIndex];
+          if (typeof result[index] == 'undefined') result[index] = iterable[index];
+        }
+        }
+      }
+      return result
+    };
+
+    /**
+     * This method is like `_.findIndex` except that it returns the key of the
+     * first element that passes the callback check, instead of the element itself.
+     *
+     * If a property name is provided for `callback` the created "_.pluck" style
+     * callback will return the property value of the given element.
+     *
+     * If an object is provided for `callback` the created "_.where" style callback
+     * will return `true` for elements that have the properties of the given object,
+     * else `false`.
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {Object} object The object to search.
+     * @param {Function|Object|string} [callback=identity] The function called per
+     *  iteration. If a property name or object is provided it will be used to
+     *  create a "_.pluck" or "_.where" style callback, respectively.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {string|undefined} Returns the key of the found element, else `undefined`.
+     * @example
+     *
+     * var characters = {
+     *   'barney': {  'age': 36, 'blocked': false },
+     *   'fred': {    'age': 40, 'blocked': true },
+     *   'pebbles': { 'age': 1,  'blocked': false }
+     * };
+     *
+     * _.findKey(characters, function(chr) {
+     *   return chr.age < 40;
+     * });
+     * // => 'barney' (property order is not guaranteed across environments)
+     *
+     * // using "_.where" callback shorthand
+     * _.findKey(characters, { 'age': 1 });
+     * // => 'pebbles'
+     *
+     * // using "_.pluck" callback shorthand
+     * _.findKey(characters, 'blocked');
+     * // => 'fred'
+     */
+    function findKey(object, callback, thisArg) {
+      var result;
+      callback = lodash.createCallback(callback, thisArg, 3);
+      forOwn(object, function(value, key, object) {
+        if (callback(value, key, object)) {
+          result = key;
+          return false;
+        }
+      });
+      return result;
+    }
+
+    /**
+     * This method is like `_.findKey` except that it iterates over elements
+     * of a `collection` in the opposite order.
+     *
+     * If a property name is provided for `callback` the created "_.pluck" style
+     * callback will return the property value of the given element.
+     *
+     * If an object is provided for `callback` the created "_.where" style callback
+     * will return `true` for elements that have the properties of the given object,
+     * else `false`.
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {Object} object The object to search.
+     * @param {Function|Object|string} [callback=identity] The function called per
+     *  iteration. If a property name or object is provided it will be used to
+     *  create a "_.pluck" or "_.where" style callback, respectively.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {string|undefined} Returns the key of the found element, else `undefined`.
+     * @example
+     *
+     * var characters = {
+     *   'barney': {  'age': 36, 'blocked': true },
+     *   'fred': {    'age': 40, 'blocked': false },
+     *   'pebbles': { 'age': 1,  'blocked': true }
+     * };
+     *
+     * _.findLastKey(characters, function(chr) {
+     *   return chr.age < 40;
+     * });
+     * // => returns `pebbles`, assuming `_.findKey` returns `barney`
+     *
+     * // using "_.where" callback shorthand
+     * _.findLastKey(characters, { 'age': 40 });
+     * // => 'fred'
+     *
+     * // using "_.pluck" callback shorthand
+     * _.findLastKey(characters, 'blocked');
+     * // => 'pebbles'
+     */
+    function findLastKey(object, callback, thisArg) {
+      var result;
+      callback = lodash.createCallback(callback, thisArg, 3);
+      forOwnRight(object, function(value, key, object) {
+        if (callback(value, key, object)) {
+          result = key;
+          return false;
+        }
+      });
+      return result;
+    }
+
+    /**
+     * Iterates over own and inherited enumerable properties of an object,
+     * executing the callback for each property. The callback is bound to `thisArg`
+     * and invoked with three arguments; (value, key, object). Callbacks may exit
+     * iteration early by explicitly returning `false`.
+     *
+     * @static
+     * @memberOf _
+     * @type Function
+     * @category Objects
+     * @param {Object} object The object to iterate over.
+     * @param {Function} [callback=identity] The function called per iteration.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {Object} Returns `object`.
+     * @example
+     *
+     * function Shape() {
+     *   this.x = 0;
+     *   this.y = 0;
+     * }
+     *
+     * Shape.prototype.move = function(x, y) {
+     *   this.x += x;
+     *   this.y += y;
+     * };
+     *
+     * _.forIn(new Shape, function(value, key) {
+     *   console.log(key);
+     * });
+     * // => logs 'x', 'y', and 'move' (property order is not guaranteed across environments)
+     */
+    var forIn = function(collection, callback, thisArg) {
+      var index, iterable = collection, result = iterable;
+      if (!iterable) return result;
+      if (!objectTypes[typeof iterable]) return result;
+      callback = callback && typeof thisArg == 'undefined' ? callback : baseCreateCallback(callback, thisArg, 3);
+        for (index in iterable) {
+          if (callback(iterable[index], index, collection) === false) return result;
+        }
+      return result
+    };
+
+    /**
+     * This method is like `_.forIn` except that it iterates over elements
+     * of a `collection` in the opposite order.
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {Object} object The object to iterate over.
+     * @param {Function} [callback=identity] The function called per iteration.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {Object} Returns `object`.
+     * @example
+     *
+     * function Shape() {
+     *   this.x = 0;
+     *   this.y = 0;
+     * }
+     *
+     * Shape.prototype.move = function(x, y) {
+     *   this.x += x;
+     *   this.y += y;
+     * };
+     *
+     * _.forInRight(new Shape, function(value, key) {
+     *   console.log(key);
+     * });
+     * // => logs 'move', 'y', and 'x' assuming `_.forIn ` logs 'x', 'y', and 'move'
+     */
+    function forInRight(object, callback, thisArg) {
+      var pairs = [];
+
+      forIn(object, function(value, key) {
+        pairs.push(key, value);
+      });
+
+      var length = pairs.length;
+      callback = baseCreateCallback(callback, thisArg, 3);
+      while (length--) {
+        if (callback(pairs[length--], pairs[length], object) === false) {
+          break;
+        }
+      }
+      return object;
+    }
+
+    /**
+     * Iterates over own enumerable properties of an object, executing the callback
+     * for each property. The callback is bound to `thisArg` and invoked with three
+     * arguments; (value, key, object). Callbacks may exit iteration early by
+     * explicitly returning `false`.
+     *
+     * @static
+     * @memberOf _
+     * @type Function
+     * @category Objects
+     * @param {Object} object The object to iterate over.
+     * @param {Function} [callback=identity] The function called per iteration.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {Object} Returns `object`.
+     * @example
+     *
+     * _.forOwn({ '0': 'zero', '1': 'one', 'length': 2 }, function(num, key) {
+     *   console.log(key);
+     * });
+     * // => logs '0', '1', and 'length' (property order is not guaranteed across environments)
+     */
+    var forOwn = function(collection, callback, thisArg) {
+      var index, iterable = collection, result = iterable;
+      if (!iterable) return result;
+      if (!objectTypes[typeof iterable]) return result;
+      callback = callback && typeof thisArg == 'undefined' ? callback : baseCreateCallback(callback, thisArg, 3);
+        var ownIndex = -1,
+            ownProps = objectTypes[typeof iterable] && keys(iterable),
+            length = ownProps ? ownProps.length : 0;
+
+        while (++ownIndex < length) {
+          index = ownProps[ownIndex];
+          if (callback(iterable[index], index, collection) === false) return result;
+        }
+      return result
+    };
+
+    /**
+     * This method is like `_.forOwn` except that it iterates over elements
+     * of a `collection` in the opposite order.
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {Object} object The object to iterate over.
+     * @param {Function} [callback=identity] The function called per iteration.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {Object} Returns `object`.
+     * @example
+     *
+     * _.forOwnRight({ '0': 'zero', '1': 'one', 'length': 2 }, function(num, key) {
+     *   console.log(key);
+     * });
+     * // => logs 'length', '1', and '0' assuming `_.forOwn` logs '0', '1', and 'length'
+     */
+    function forOwnRight(object, callback, thisArg) {
+      var props = keys(object),
+          length = props.length;
+
+      callback = baseCreateCallback(callback, thisArg, 3);
+      while (length--) {
+        var key = props[length];
+        if (callback(object[key], key, object) === false) {
+          break;
+        }
+      }
+      return object;
+    }
+
+    /**
+     * Creates a sorted array of property names of all enumerable properties,
+     * own and inherited, of `object` that have function values.
+     *
+     * @static
+     * @memberOf _
+     * @alias methods
+     * @category Objects
+     * @param {Object} object The object to inspect.
+     * @returns {Array} Returns an array of property names that have function values.
+     * @example
+     *
+     * _.functions(_);
+     * // => ['all', 'any', 'bind', 'bindAll', 'clone', 'compact', 'compose', ...]
+     */
+    function functions(object) {
+      var result = [];
+      forIn(object, function(value, key) {
+        if (isFunction(value)) {
+          result.push(key);
+        }
+      });
+      return result.sort();
+    }
+
+    /**
+     * Checks if the specified property name exists as a direct property of `object`,
+     * instead of an inherited property.
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {Object} object The object to inspect.
+     * @param {string} key The name of the property to check.
+     * @returns {boolean} Returns `true` if key is a direct property, else `false`.
+     * @example
+     *
+     * _.has({ 'a': 1, 'b': 2, 'c': 3 }, 'b');
+     * // => true
+     */
+    function has(object, key) {
+      return object ? hasOwnProperty.call(object, key) : false;
+    }
+
+    /**
+     * Creates an object composed of the inverted keys and values of the given object.
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {Object} object The object to invert.
+     * @returns {Object} Returns the created inverted object.
+     * @example
+     *
+     * _.invert({ 'first': 'fred', 'second': 'barney' });
+     * // => { 'fred': 'first', 'barney': 'second' }
+     */
+    function invert(object) {
+      var index = -1,
+          props = keys(object),
+          length = props.length,
+          result = {};
+
+      while (++index < length) {
+        var key = props[index];
+        result[object[key]] = key;
+      }
+      return result;
+    }
+
+    /**
+     * Checks if `value` is a boolean value.
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {*} value The value to check.
+     * @returns {boolean} Returns `true` if the `value` is a boolean value, else `false`.
+     * @example
+     *
+     * _.isBoolean(null);
+     * // => false
+     */
+    function isBoolean(value) {
+      return value === true || value === false ||
+        value && typeof value == 'object' && toString.call(value) == boolClass || false;
+    }
+
+    /**
+     * Checks if `value` is a date.
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {*} value The value to check.
+     * @returns {boolean} Returns `true` if the `value` is a date, else `false`.
+     * @example
+     *
+     * _.isDate(new Date);
+     * // => true
+     */
+    function isDate(value) {
+      return value && typeof value == 'object' && toString.call(value) == dateClass || false;
+    }
+
+    /**
+     * Checks if `value` is a DOM element.
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {*} value The value to check.
+     * @returns {boolean} Returns `true` if the `value` is a DOM element, else `false`.
+     * @example
+     *
+     * _.isElement(document.body);
+     * // => true
+     */
+    function isElement(value) {
+      return value && value.nodeType === 1 || false;
+    }
+
+    /**
+     * Checks if `value` is empty. Arrays, strings, or `arguments` objects with a
+     * length of `0` and objects with no own enumerable properties are considered
+     * "empty".
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {Array|Object|string} value The value to inspect.
+     * @returns {boolean} Returns `true` if the `value` is empty, else `false`.
+     * @example
+     *
+     * _.isEmpty([1, 2, 3]);
+     * // => false
+     *
+     * _.isEmpty({});
+     * // => true
+     *
+     * _.isEmpty('');
+     * // => true
+     */
+    function isEmpty(value) {
+      var result = true;
+      if (!value) {
+        return result;
+      }
+      var className = toString.call(value),
+          length = value.length;
+
+      if ((className == arrayClass || className == stringClass || className == argsClass ) ||
+          (className == objectClass && typeof length == 'number' && isFunction(value.splice))) {
+        return !length;
+      }
+      forOwn(value, function() {
+        return (result = false);
+      });
+      return result;
+    }
+
+    /**
+     * Performs a deep comparison between two values to determine if they are
+     * equivalent to each other. If a callback is provided it will be executed
+     * to compare values. If the callback returns `undefined` comparisons will
+     * be handled by the method instead. The callback is bound to `thisArg` and
+     * invoked with two arguments; (a, b).
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {*} a The value to compare.
+     * @param {*} b The other value to compare.
+     * @param {Function} [callback] The function to customize comparing values.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {boolean} Returns `true` if the values are equivalent, else `false`.
+     * @example
+     *
+     * var object = { 'name': 'fred' };
+     * var copy = { 'name': 'fred' };
+     *
+     * object == copy;
+     * // => false
+     *
+     * _.isEqual(object, copy);
+     * // => true
+     *
+     * var words = ['hello', 'goodbye'];
+     * var otherWords = ['hi', 'goodbye'];
+     *
+     * _.isEqual(words, otherWords, function(a, b) {
+     *   var reGreet = /^(?:hello|hi)$/i,
+     *       aGreet = _.isString(a) && reGreet.test(a),
+     *       bGreet = _.isString(b) && reGreet.test(b);
+     *
+     *   return (aGreet || bGreet) ? (aGreet == bGreet) : undefined;
+     * });
+     * // => true
+     */
+    function isEqual(a, b, callback, thisArg) {
+      return baseIsEqual(a, b, typeof callback == 'function' && baseCreateCallback(callback, thisArg, 2));
+    }
+
+    /**
+     * Checks if `value` is, or can be coerced to, a finite number.
+     *
+     * Note: This is not the same as native `isFinite` which will return true for
+     * booleans and empty strings. See http://es5.github.io/#x15.1.2.5.
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {*} value The value to check.
+     * @returns {boolean} Returns `true` if the `value` is finite, else `false`.
+     * @example
+     *
+     * _.isFinite(-101);
+     * // => true
+     *
+     * _.isFinite('10');
+     * // => true
+     *
+     * _.isFinite(true);
+     * // => false
+     *
+     * _.isFinite('');
+     * // => false
+     *
+     * _.isFinite(Infinity);
+     * // => false
+     */
+    function isFinite(value) {
+      return nativeIsFinite(value) && !nativeIsNaN(parseFloat(value));
+    }
+
+    /**
+     * Checks if `value` is a function.
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {*} value The value to check.
+     * @returns {boolean} Returns `true` if the `value` is a function, else `false`.
+     * @example
+     *
+     * _.isFunction(_);
+     * // => true
+     */
+    function isFunction(value) {
+      return typeof value == 'function';
+    }
+
+    /**
+     * Checks if `value` is the language type of Object.
+     * (e.g. arrays, functions, objects, regexes, `new Number(0)`, and `new String('')`)
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {*} value The value to check.
+     * @returns {boolean} Returns `true` if the `value` is an object, else `false`.
+     * @example
+     *
+     * _.isObject({});
+     * // => true
+     *
+     * _.isObject([1, 2, 3]);
+     * // => true
+     *
+     * _.isObject(1);
+     * // => false
+     */
+    function isObject(value) {
+      // check if the value is the ECMAScript language type of Object
+      // http://es5.github.io/#x8
+      // and avoid a V8 bug
+      // http://code.google.com/p/v8/issues/detail?id=2291
+      return !!(value && objectTypes[typeof value]);
+    }
+
+    /**
+     * Checks if `value` is `NaN`.
+     *
+     * Note: This is not the same as native `isNaN` which will return `true` for
+     * `undefined` and other non-numeric values. See http://es5.github.io/#x15.1.2.4.
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {*} value The value to check.
+     * @returns {boolean} Returns `true` if the `value` is `NaN`, else `false`.
+     * @example
+     *
+     * _.isNaN(NaN);
+     * // => true
+     *
+     * _.isNaN(new Number(NaN));
+     * // => true
+     *
+     * isNaN(undefined);
+     * // => true
+     *
+     * _.isNaN(undefined);
+     * // => false
+     */
+    function isNaN(value) {
+      // `NaN` as a primitive is the only value that is not equal to itself
+      // (perform the [[Class]] check first to avoid errors with some host objects in IE)
+      return isNumber(value) && value != +value;
+    }
+
+    /**
+     * Checks if `value` is `null`.
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {*} value The value to check.
+     * @returns {boolean} Returns `true` if the `value` is `null`, else `false`.
+     * @example
+     *
+     * _.isNull(null);
+     * // => true
+     *
+     * _.isNull(undefined);
+     * // => false
+     */
+    function isNull(value) {
+      return value === null;
+    }
+
+    /**
+     * Checks if `value` is a number.
+     *
+     * Note: `NaN` is considered a number. See http://es5.github.io/#x8.5.
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {*} value The value to check.
+     * @returns {boolean} Returns `true` if the `value` is a number, else `false`.
+     * @example
+     *
+     * _.isNumber(8.4 * 5);
+     * // => true
+     */
+    function isNumber(value) {
+      return typeof value == 'number' ||
+        value && typeof value == 'object' && toString.call(value) == numberClass || false;
+    }
+
+    /**
+     * Checks if `value` is an object created by the `Object` constructor.
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {*} value The value to check.
+     * @returns {boolean} Returns `true` if `value` is a plain object, else `false`.
+     * @example
+     *
+     * function Shape() {
+     *   this.x = 0;
+     *   this.y = 0;
+     * }
+     *
+     * _.isPlainObject(new Shape);
+     * // => false
+     *
+     * _.isPlainObject([1, 2, 3]);
+     * // => false
+     *
+     * _.isPlainObject({ 'x': 0, 'y': 0 });
+     * // => true
+     */
+    var isPlainObject = !getPrototypeOf ? shimIsPlainObject : function(value) {
+      if (!(value && toString.call(value) == objectClass)) {
+        return false;
+      }
+      var valueOf = value.valueOf,
+          objProto = isNative(valueOf) && (objProto = getPrototypeOf(valueOf)) && getPrototypeOf(objProto);
+
+      return objProto
+        ? (value == objProto || getPrototypeOf(value) == objProto)
+        : shimIsPlainObject(value);
+    };
+
+    /**
+     * Checks if `value` is a regular expression.
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {*} value The value to check.
+     * @returns {boolean} Returns `true` if the `value` is a regular expression, else `false`.
+     * @example
+     *
+     * _.isRegExp(/fred/);
+     * // => true
+     */
+    function isRegExp(value) {
+      return value && typeof value == 'object' && toString.call(value) == regexpClass || false;
+    }
+
+    /**
+     * Checks if `value` is a string.
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {*} value The value to check.
+     * @returns {boolean} Returns `true` if the `value` is a string, else `false`.
+     * @example
+     *
+     * _.isString('fred');
+     * // => true
+     */
+    function isString(value) {
+      return typeof value == 'string' ||
+        value && typeof value == 'object' && toString.call(value) == stringClass || false;
+    }
+
+    /**
+     * Checks if `value` is `undefined`.
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {*} value The value to check.
+     * @returns {boolean} Returns `true` if the `value` is `undefined`, else `false`.
+     * @example
+     *
+     * _.isUndefined(void 0);
+     * // => true
+     */
+    function isUndefined(value) {
+      return typeof value == 'undefined';
+    }
+
+    /**
+     * Creates an object with the same keys as `object` and values generated by
+     * running each own enumerable property of `object` through the callback.
+     * The callback is bound to `thisArg` and invoked with three arguments;
+     * (value, key, object).
+     *
+     * If a property name is provided for `callback` the created "_.pluck" style
+     * callback will return the property value of the given element.
+     *
+     * If an object is provided for `callback` the created "_.where" style callback
+     * will return `true` for elements that have the properties of the given object,
+     * else `false`.
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {Object} object The object to iterate over.
+     * @param {Function|Object|string} [callback=identity] The function called
+     *  per iteration. If a property name or object is provided it will be used
+     *  to create a "_.pluck" or "_.where" style callback, respectively.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {Array} Returns a new object with values of the results of each `callback` execution.
+     * @example
+     *
+     * _.mapValues({ 'a': 1, 'b': 2, 'c': 3} , function(num) { return num * 3; });
+     * // => { 'a': 3, 'b': 6, 'c': 9 }
+     *
+     * var characters = {
+     *   'fred': { 'name': 'fred', 'age': 40 },
+     *   'pebbles': { 'name': 'pebbles', 'age': 1 }
+     * };
+     *
+     * // using "_.pluck" callback shorthand
+     * _.mapValues(characters, 'age');
+     * // => { 'fred': 40, 'pebbles': 1 }
+     */
+    function mapValues(object, callback, thisArg) {
+      var result = {};
+      callback = lodash.createCallback(callback, thisArg, 3);
+
+      forOwn(object, function(value, key, object) {
+        result[key] = callback(value, key, object);
+      });
+      return result;
+    }
+
+    /**
+     * Recursively merges own enumerable properties of the source object(s), that
+     * don't resolve to `undefined` into the destination object. Subsequent sources
+     * will overwrite property assignments of previous sources. If a callback is
+     * provided it will be executed to produce the merged values of the destination
+     * and source properties. If the callback returns `undefined` merging will
+     * be handled by the method instead. The callback is bound to `thisArg` and
+     * invoked with two arguments; (objectValue, sourceValue).
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {Object} object The destination object.
+     * @param {...Object} [source] The source objects.
+     * @param {Function} [callback] The function to customize merging properties.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {Object} Returns the destination object.
+     * @example
+     *
+     * var names = {
+     *   'characters': [
+     *     { 'name': 'barney' },
+     *     { 'name': 'fred' }
+     *   ]
+     * };
+     *
+     * var ages = {
+     *   'characters': [
+     *     { 'age': 36 },
+     *     { 'age': 40 }
+     *   ]
+     * };
+     *
+     * _.merge(names, ages);
+     * // => { 'characters': [{ 'name': 'barney', 'age': 36 }, { 'name': 'fred', 'age': 40 }] }
+     *
+     * var food = {
+     *   'fruits': ['apple'],
+     *   'vegetables': ['beet']
+     * };
+     *
+     * var otherFood = {
+     *   'fruits': ['banana'],
+     *   'vegetables': ['carrot']
+     * };
+     *
+     * _.merge(food, otherFood, function(a, b) {
+     *   return _.isArray(a) ? a.concat(b) : undefined;
+     * });
+     * // => { 'fruits': ['apple', 'banana'], 'vegetables': ['beet', 'carrot] }
+     */
+    function merge(object) {
+      var args = arguments,
+          length = 2;
+
+      if (!isObject(object)) {
+        return object;
+      }
+      // allows working with `_.reduce` and `_.reduceRight` without using
+      // their `index` and `collection` arguments
+      if (typeof args[2] != 'number') {
+        length = args.length;
+      }
+      if (length > 3 && typeof args[length - 2] == 'function') {
+        var callback = baseCreateCallback(args[--length - 1], args[length--], 2);
+      } else if (length > 2 && typeof args[length - 1] == 'function') {
+        callback = args[--length];
+      }
+      var sources = slice(arguments, 1, length),
+          index = -1,
+          stackA = getArray(),
+          stackB = getArray();
+
+      while (++index < length) {
+        baseMerge(object, sources[index], callback, stackA, stackB);
+      }
+      releaseArray(stackA);
+      releaseArray(stackB);
+      return object;
+    }
+
+    /**
+     * Creates a shallow clone of `object` excluding the specified properties.
+     * Property names may be specified as individual arguments or as arrays of
+     * property names. If a callback is provided it will be executed for each
+     * property of `object` omitting the properties the callback returns truey
+     * for. The callback is bound to `thisArg` and invoked with three arguments;
+     * (value, key, object).
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {Object} object The source object.
+     * @param {Function|...string|string[]} [callback] The properties to omit or the
+     *  function called per iteration.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {Object} Returns an object without the omitted properties.
+     * @example
+     *
+     * _.omit({ 'name': 'fred', 'age': 40 }, 'age');
+     * // => { 'name': 'fred' }
+     *
+     * _.omit({ 'name': 'fred', 'age': 40 }, function(value) {
+     *   return typeof value == 'number';
+     * });
+     * // => { 'name': 'fred' }
+     */
+    function omit(object, callback, thisArg) {
+      var result = {};
+      if (typeof callback != 'function') {
+        var props = [];
+        forIn(object, function(value, key) {
+          props.push(key);
+        });
+        props = baseDifference(props, baseFlatten(arguments, true, false, 1));
+
+        var index = -1,
+            length = props.length;
+
+        while (++index < length) {
+          var key = props[index];
+          result[key] = object[key];
+        }
+      } else {
+        callback = lodash.createCallback(callback, thisArg, 3);
+        forIn(object, function(value, key, object) {
+          if (!callback(value, key, object)) {
+            result[key] = value;
+          }
+        });
+      }
+      return result;
+    }
+
+    /**
+     * Creates a two dimensional array of an object's key-value pairs,
+     * i.e. `[[key1, value1], [key2, value2]]`.
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {Object} object The object to inspect.
+     * @returns {Array} Returns new array of key-value pairs.
+     * @example
+     *
+     * _.pairs({ 'barney': 36, 'fred': 40 });
+     * // => [['barney', 36], ['fred', 40]] (property order is not guaranteed across environments)
+     */
+    function pairs(object) {
+      var index = -1,
+          props = keys(object),
+          length = props.length,
+          result = Array(length);
+
+      while (++index < length) {
+        var key = props[index];
+        result[index] = [key, object[key]];
+      }
+      return result;
+    }
+
+    /**
+     * Creates a shallow clone of `object` composed of the specified properties.
+     * Property names may be specified as individual arguments or as arrays of
+     * property names. If a callback is provided it will be executed for each
+     * property of `object` picking the properties the callback returns truey
+     * for. The callback is bound to `thisArg` and invoked with three arguments;
+     * (value, key, object).
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {Object} object The source object.
+     * @param {Function|...string|string[]} [callback] The function called per
+     *  iteration or property names to pick, specified as individual property
+     *  names or arrays of property names.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {Object} Returns an object composed of the picked properties.
+     * @example
+     *
+     * _.pick({ 'name': 'fred', '_userid': 'fred1' }, 'name');
+     * // => { 'name': 'fred' }
+     *
+     * _.pick({ 'name': 'fred', '_userid': 'fred1' }, function(value, key) {
+     *   return key.charAt(0) != '_';
+     * });
+     * // => { 'name': 'fred' }
+     */
+    function pick(object, callback, thisArg) {
+      var result = {};
+      if (typeof callback != 'function') {
+        var index = -1,
+            props = baseFlatten(arguments, true, false, 1),
+            length = isObject(object) ? props.length : 0;
+
+        while (++index < length) {
+          var key = props[index];
+          if (key in object) {
+            result[key] = object[key];
+          }
+        }
+      } else {
+        callback = lodash.createCallback(callback, thisArg, 3);
+        forIn(object, function(value, key, object) {
+          if (callback(value, key, object)) {
+            result[key] = value;
+          }
+        });
+      }
+      return result;
+    }
+
+    /**
+     * An alternative to `_.reduce` this method transforms `object` to a new
+     * `accumulator` object which is the result of running each of its own
+     * enumerable properties through a callback, with each callback execution
+     * potentially mutating the `accumulator` object. The callback is bound to
+     * `thisArg` and invoked with four arguments; (accumulator, value, key, object).
+     * Callbacks may exit iteration early by explicitly returning `false`.
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {Array|Object} object The object to iterate over.
+     * @param {Function} [callback=identity] The function called per iteration.
+     * @param {*} [accumulator] The custom accumulator value.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {*} Returns the accumulated value.
+     * @example
+     *
+     * var squares = _.transform([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], function(result, num) {
+     *   num *= num;
+     *   if (num % 2) {
+     *     return result.push(num) < 3;
+     *   }
+     * });
+     * // => [1, 9, 25]
+     *
+     * var mapped = _.transform({ 'a': 1, 'b': 2, 'c': 3 }, function(result, num, key) {
+     *   result[key] = num * 3;
+     * });
+     * // => { 'a': 3, 'b': 6, 'c': 9 }
+     */
+    function transform(object, callback, accumulator, thisArg) {
+      var isArr = isArray(object);
+      if (accumulator == null) {
+        if (isArr) {
+          accumulator = [];
+        } else {
+          var ctor = object && object.constructor,
+              proto = ctor && ctor.prototype;
+
+          accumulator = baseCreate(proto);
+        }
+      }
+      if (callback) {
+        callback = lodash.createCallback(callback, thisArg, 4);
+        (isArr ? forEach : forOwn)(object, function(value, index, object) {
+          return callback(accumulator, value, index, object);
+        });
+      }
+      return accumulator;
+    }
+
+    /**
+     * Creates an array composed of the own enumerable property values of `object`.
+     *
+     * @static
+     * @memberOf _
+     * @category Objects
+     * @param {Object} object The object to inspect.
+     * @returns {Array} Returns an array of property values.
+     * @example
+     *
+     * _.values({ 'one': 1, 'two': 2, 'three': 3 });
+     * // => [1, 2, 3] (property order is not guaranteed across environments)
+     */
+    function values(object) {
+      var index = -1,
+          props = keys(object),
+          length = props.length,
+          result = Array(length);
+
+      while (++index < length) {
+        result[index] = object[props[index]];
+      }
+      return result;
+    }
+
+    /*--------------------------------------------------------------------------*/
+
+    /**
+     * Creates an array of elements from the specified indexes, or keys, of the
+     * `collection`. Indexes may be specified as individual arguments or as arrays
+     * of indexes.
+     *
+     * @static
+     * @memberOf _
+     * @category Collections
+     * @param {Array|Object|string} collection The collection to iterate over.
+     * @param {...(number|number[]|string|string[])} [index] The indexes of `collection`
+     *   to retrieve, specified as individual indexes or arrays of indexes.
+     * @returns {Array} Returns a new array of elements corresponding to the
+     *  provided indexes.
+     * @example
+     *
+     * _.at(['a', 'b', 'c', 'd', 'e'], [0, 2, 4]);
+     * // => ['a', 'c', 'e']
+     *
+     * _.at(['fred', 'barney', 'pebbles'], 0, 2);
+     * // => ['fred', 'pebbles']
+     */
+    function at(collection) {
+      var args = arguments,
+          index = -1,
+          props = baseFlatten(args, true, false, 1),
+          length = (args[2] && args[2][args[1]] === collection) ? 1 : props.length,
+          result = Array(length);
+
+      while(++index < length) {
+        result[index] = collection[props[index]];
+      }
+      return result;
+    }
+
+    /**
+     * Checks if a given value is present in a collection using strict equality
+     * for comparisons, i.e. `===`. If `fromIndex` is negative, it is used as the
+     * offset from the end of the collection.
+     *
+     * @static
+     * @memberOf _
+     * @alias include
+     * @category Collections
+     * @param {Array|Object|string} collection The collection to iterate over.
+     * @param {*} target The value to check for.
+     * @param {number} [fromIndex=0] The index to search from.
+     * @returns {boolean} Returns `true` if the `target` element is found, else `false`.
+     * @example
+     *
+     * _.contains([1, 2, 3], 1);
+     * // => true
+     *
+     * _.contains([1, 2, 3], 1, 2);
+     * // => false
+     *
+     * _.contains({ 'name': 'fred', 'age': 40 }, 'fred');
+     * // => true
+     *
+     * _.contains('pebbles', 'eb');
+     * // => true
+     */
+    function contains(collection, target, fromIndex) {
+      var index = -1,
+          indexOf = getIndexOf(),
+          length = collection ? collection.length : 0,
+          result = false;
+
+      fromIndex = (fromIndex < 0 ? nativeMax(0, length + fromIndex) : fromIndex) || 0;
+      if (isArray(collection)) {
+        result = indexOf(collection, target, fromIndex) > -1;
+      } else if (typeof length == 'number') {
+        result = (isString(collection) ? collection.indexOf(target, fromIndex) : indexOf(collection, target, fromIndex)) > -1;
+      } else {
+        forOwn(collection, function(value) {
+          if (++index >= fromIndex) {
+            return !(result = value === target);
+          }
+        });
+      }
+      return result;
+    }
+
+    /**
+     * Creates an object composed of keys generated from the results of running
+     * each element of `collection` through the callback. The corresponding value
+     * of each key is the number of times the key was returned by the callback.
+     * The callback is bound to `thisArg` and invoked with three arguments;
+     * (value, index|key, collection).
+     *
+     * If a property name is provided for `callback` the created "_.pluck" style
+     * callback will return the property value of the given element.
+     *
+     * If an object is provided for `callback` the created "_.where" style callback
+     * will return `true` for elements that have the properties of the given object,
+     * else `false`.
+     *
+     * @static
+     * @memberOf _
+     * @category Collections
+     * @param {Array|Object|string} collection The collection to iterate over.
+     * @param {Function|Object|string} [callback=identity] The function called
+     *  per iteration. If a property name or object is provided it will be used
+     *  to create a "_.pluck" or "_.where" style callback, respectively.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {Object} Returns the composed aggregate object.
+     * @example
+     *
+     * _.countBy([4.3, 6.1, 6.4], function(num) { return Math.floor(num); });
+     * // => { '4': 1, '6': 2 }
+     *
+     * _.countBy([4.3, 6.1, 6.4], function(num) { return this.floor(num); }, Math);
+     * // => { '4': 1, '6': 2 }
+     *
+     * _.countBy(['one', 'two', 'three'], 'length');
+     * // => { '3': 2, '5': 1 }
+     */
+    var countBy = createAggregator(function(result, value, key) {
+      (hasOwnProperty.call(result, key) ? result[key]++ : result[key] = 1);
+    });
+
+    /**
+     * Checks if the given callback returns truey value for **all** elements of
+     * a collection. The callback is bound to `thisArg` and invoked with three
+     * arguments; (value, index|key, collection).
+     *
+     * If a property name is provided for `callback` the created "_.pluck" style
+     * callback will return the property value of the given element.
+     *
+     * If an object is provided for `callback` the created "_.where" style callback
+     * will return `true` for elements that have the properties of the given object,
+     * else `false`.
+     *
+     * @static
+     * @memberOf _
+     * @alias all
+     * @category Collections
+     * @param {Array|Object|string} collection The collection to iterate over.
+     * @param {Function|Object|string} [callback=identity] The function called
+     *  per iteration. If a property name or object is provided it will be used
+     *  to create a "_.pluck" or "_.where" style callback, respectively.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {boolean} Returns `true` if all elements passed the callback check,
+     *  else `false`.
+     * @example
+     *
+     * _.every([true, 1, null, 'yes']);
+     * // => false
+     *
+     * var characters = [
+     *   { 'name': 'barney', 'age': 36 },
+     *   { 'name': 'fred',   'age': 40 }
+     * ];
+     *
+     * // using "_.pluck" callback shorthand
+     * _.every(characters, 'age');
+     * // => true
+     *
+     * // using "_.where" callback shorthand
+     * _.every(characters, { 'age': 36 });
+     * // => false
+     */
+    function every(collection, callback, thisArg) {
+      var result = true;
+      callback = lodash.createCallback(callback, thisArg, 3);
+
+      var index = -1,
+          length = collection ? collection.length : 0;
+
+      if (typeof length == 'number') {
+        while (++index < length) {
+          if (!(result = !!callback(collection[index], index, collection))) {
+            break;
+          }
+        }
+      } else {
+        forOwn(collection, function(value, index, collection) {
+          return (result = !!callback(value, index, collection));
+        });
+      }
+      return result;
+    }
+
+    /**
+     * Iterates over elements of a collection, returning an array of all elements
+     * the callback returns truey for. The callback is bound to `thisArg` and
+     * invoked with three arguments; (value, index|key, collection).
+     *
+     * If a property name is provided for `callback` the created "_.pluck" style
+     * callback will return the property value of the given element.
+     *
+     * If an object is provided for `callback` the created "_.where" style callback
+     * will return `true` for elements that have the properties of the given object,
+     * else `false`.
+     *
+     * @static
+     * @memberOf _
+     * @alias select
+     * @category Collections
+     * @param {Array|Object|string} collection The collection to iterate over.
+     * @param {Function|Object|string} [callback=identity] The function called
+     *  per iteration. If a property name or object is provided it will be used
+     *  to create a "_.pluck" or "_.where" style callback, respectively.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {Array} Returns a new array of elements that passed the callback check.
+     * @example
+     *
+     * var evens = _.filter([1, 2, 3, 4, 5, 6], function(num) { return num % 2 == 0; });
+     * // => [2, 4, 6]
+     *
+     * var characters = [
+     *   { 'name': 'barney', 'age': 36, 'blocked': false },
+     *   { 'name': 'fred',   'age': 40, 'blocked': true }
+     * ];
+     *
+     * // using "_.pluck" callback shorthand
+     * _.filter(characters, 'blocked');
+     * // => [{ 'name': 'fred', 'age': 40, 'blocked': true }]
+     *
+     * // using "_.where" callback shorthand
+     * _.filter(characters, { 'age': 36 });
+     * // => [{ 'name': 'barney', 'age': 36, 'blocked': false }]
+     */
+    function filter(collection, callback, thisArg) {
+      var result = [];
+      callback = lodash.createCallback(callback, thisArg, 3);
+
+      var index = -1,
+          length = collection ? collection.length : 0;
+
+      if (typeof length == 'number') {
+        while (++index < length) {
+          var value = collection[index];
+          if (callback(value, index, collection)) {
+            result.push(value);
+          }
+        }
+      } else {
+        forOwn(collection, function(value, index, collection) {
+          if (callback(value, index, collection)) {
+            result.push(value);
+          }
+        });
+      }
+      return result;
+    }
+
+    /**
+     * Iterates over elements of a collection, returning the first element that
+     * the callback returns truey for. The callback is bound to `thisArg` and
+     * invoked with three arguments; (value, index|key, collection).
+     *
+     * If a property name is provided for `callback` the created "_.pluck" style
+     * callback will return the property value of the given element.
+     *
+     * If an object is provided for `callback` the created "_.where" style callback
+     * will return `true` for elements that have the properties of the given object,
+     * else `false`.
+     *
+     * @static
+     * @memberOf _
+     * @alias detect, findWhere
+     * @category Collections
+     * @param {Array|Object|string} collection The collection to iterate over.
+     * @param {Function|Object|string} [callback=identity] The function called
+     *  per iteration. If a property name or object is provided it will be used
+     *  to create a "_.pluck" or "_.where" style callback, respectively.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {*} Returns the found element, else `undefined`.
+     * @example
+     *
+     * var characters = [
+     *   { 'name': 'barney',  'age': 36, 'blocked': false },
+     *   { 'name': 'fred',    'age': 40, 'blocked': true },
+     *   { 'name': 'pebbles', 'age': 1,  'blocked': false }
+     * ];
+     *
+     * _.find(characters, function(chr) {
+     *   return chr.age < 40;
+     * });
+     * // => { 'name': 'barney', 'age': 36, 'blocked': false }
+     *
+     * // using "_.where" callback shorthand
+     * _.find(characters, { 'age': 1 });
+     * // =>  { 'name': 'pebbles', 'age': 1, 'blocked': false }
+     *
+     * // using "_.pluck" callback shorthand
+     * _.find(characters, 'blocked');
+     * // => { 'name': 'fred', 'age': 40, 'blocked': true }
+     */
+    function find(collection, callback, thisArg) {
+      callback = lodash.createCallback(callback, thisArg, 3);
+
+      var index = -1,
+          length = collection ? collection.length : 0;
+
+      if (typeof length == 'number') {
+        while (++index < length) {
+          var value = collection[index];
+          if (callback(value, index, collection)) {
+            return value;
+          }
+        }
+      } else {
+        var result;
+        forOwn(collection, function(value, index, collection) {
+          if (callback(value, index, collection)) {
+            result = value;
+            return false;
+          }
+        });
+        return result;
+      }
+    }
+
+    /**
+     * This method is like `_.find` except that it iterates over elements
+     * of a `collection` from right to left.
+     *
+     * @static
+     * @memberOf _
+     * @category Collections
+     * @param {Array|Object|string} collection The collection to iterate over.
+     * @param {Function|Object|string} [callback=identity] The function called
+     *  per iteration. If a property name or object is provided it will be used
+     *  to create a "_.pluck" or "_.where" style callback, respectively.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {*} Returns the found element, else `undefined`.
+     * @example
+     *
+     * _.findLast([1, 2, 3, 4], function(num) {
+     *   return num % 2 == 1;
+     * });
+     * // => 3
+     */
+    function findLast(collection, callback, thisArg) {
+      var result;
+      callback = lodash.createCallback(callback, thisArg, 3);
+      forEachRight(collection, function(value, index, collection) {
+        if (callback(value, index, collection)) {
+          result = value;
+          return false;
+        }
+      });
+      return result;
+    }
+
+    /**
+     * Iterates over elements of a collection, executing the callback for each
+     * element. The callback is bound to `thisArg` and invoked with three arguments;
+     * (value, index|key, collection). Callbacks may exit iteration early by
+     * explicitly returning `false`.
+     *
+     * Note: As with other "Collections" methods, objects with a `length` property
+     * are iterated like arrays. To avoid this behavior `_.forIn` or `_.forOwn`
+     * may be used for object iteration.
+     *
+     * @static
+     * @memberOf _
+     * @alias each
+     * @category Collections
+     * @param {Array|Object|string} collection The collection to iterate over.
+     * @param {Function} [callback=identity] The function called per iteration.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {Array|Object|string} Returns `collection`.
+     * @example
+     *
+     * _([1, 2, 3]).forEach(function(num) { console.log(num); }).join(',');
+     * // => logs each number and returns '1,2,3'
+     *
+     * _.forEach({ 'one': 1, 'two': 2, 'three': 3 }, function(num) { console.log(num); });
+     * // => logs each number and returns the object (property order is not guaranteed across environments)
+     */
+    function forEach(collection, callback, thisArg) {
+      var index = -1,
+          length = collection ? collection.length : 0;
+
+      callback = callback && typeof thisArg == 'undefined' ? callback : baseCreateCallback(callback, thisArg, 3);
+      if (typeof length == 'number') {
+        while (++index < length) {
+          if (callback(collection[index], index, collection) === false) {
+            break;
+          }
+        }
+      } else {
+        forOwn(collection, callback);
+      }
+      return collection;
+    }
+
+    /**
+     * This method is like `_.forEach` except that it iterates over elements
+     * of a `collection` from right to left.
+     *
+     * @static
+     * @memberOf _
+     * @alias eachRight
+     * @category Collections
+     * @param {Array|Object|string} collection The collection to iterate over.
+     * @param {Function} [callback=identity] The function called per iteration.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {Array|Object|string} Returns `collection`.
+     * @example
+     *
+     * _([1, 2, 3]).forEachRight(function(num) { console.log(num); }).join(',');
+     * // => logs each number from right to left and returns '3,2,1'
+     */
+    function forEachRight(collection, callback, thisArg) {
+      var length = collection ? collection.length : 0;
+      callback = callback && typeof thisArg == 'undefined' ? callback : baseCreateCallback(callback, thisArg, 3);
+      if (typeof length == 'number') {
+        while (length--) {
+          if (callback(collection[length], length, collection) === false) {
+            break;
+          }
+        }
+      } else {
+        var props = keys(collection);
+        length = props.length;
+        forOwn(collection, function(value, key, collection) {
+          key = props ? props[--length] : --length;
+          return callback(collection[key], key, collection);
+        });
+      }
+      return collection;
+    }
+
+    /**
+     * Creates an object composed of keys generated from the results of running
+     * each element of a collection through the callback. The corresponding value
+     * of each key is an array of the elements responsible for generating the key.
+     * The callback is bound to `thisArg` and invoked with three arguments;
+     * (value, index|key, collection).
+     *
+     * If a property name is provided for `callback` the created "_.pluck" style
+     * callback will return the property value of the given element.
+     *
+     * If an object is provided for `callback` the created "_.where" style callback
+     * will return `true` for elements that have the properties of the given object,
+     * else `false`
+     *
+     * @static
+     * @memberOf _
+     * @category Collections
+     * @param {Array|Object|string} collection The collection to iterate over.
+     * @param {Function|Object|string} [callback=identity] The function called
+     *  per iteration. If a property name or object is provided it will be used
+     *  to create a "_.pluck" or "_.where" style callback, respectively.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {Object} Returns the composed aggregate object.
+     * @example
+     *
+     * _.groupBy([4.2, 6.1, 6.4], function(num) { return Math.floor(num); });
+     * // => { '4': [4.2], '6': [6.1, 6.4] }
+     *
+     * _.groupBy([4.2, 6.1, 6.4], function(num) { return this.floor(num); }, Math);
+     * // => { '4': [4.2], '6': [6.1, 6.4] }
+     *
+     * // using "_.pluck" callback shorthand
+     * _.groupBy(['one', 'two', 'three'], 'length');
+     * // => { '3': ['one', 'two'], '5': ['three'] }
+     */
+    var groupBy = createAggregator(function(result, value, key) {
+      (hasOwnProperty.call(result, key) ? result[key] : result[key] = []).push(value);
+    });
+
+    /**
+     * Creates an object composed of keys generated from the results of running
+     * each element of the collection through the given callback. The corresponding
+     * value of each key is the last element responsible for generating the key.
+     * The callback is bound to `thisArg` and invoked with three arguments;
+     * (value, index|key, collection).
+     *
+     * If a property name is provided for `callback` the created "_.pluck" style
+     * callback will return the property value of the given element.
+     *
+     * If an object is provided for `callback` the created "_.where" style callback
+     * will return `true` for elements that have the properties of the given object,
+     * else `false`.
+     *
+     * @static
+     * @memberOf _
+     * @category Collections
+     * @param {Array|Object|string} collection The collection to iterate over.
+     * @param {Function|Object|string} [callback=identity] The function called
+     *  per iteration. If a property name or object is provided it will be used
+     *  to create a "_.pluck" or "_.where" style callback, respectively.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {Object} Returns the composed aggregate object.
+     * @example
+     *
+     * var keys = [
+     *   { 'dir': 'left', 'code': 97 },
+     *   { 'dir': 'right', 'code': 100 }
+     * ];
+     *
+     * _.indexBy(keys, 'dir');
+     * // => { 'left': { 'dir': 'left', 'code': 97 }, 'right': { 'dir': 'right', 'code': 100 } }
+     *
+     * _.indexBy(keys, function(key) { return String.fromCharCode(key.code); });
+     * // => { 'a': { 'dir': 'left', 'code': 97 }, 'd': { 'dir': 'right', 'code': 100 } }
+     *
+     * _.indexBy(characters, function(key) { this.fromCharCode(key.code); }, String);
+     * // => { 'a': { 'dir': 'left', 'code': 97 }, 'd': { 'dir': 'right', 'code': 100 } }
+     */
+    var indexBy = createAggregator(function(result, value, key) {
+      result[key] = value;
+    });
+
+    /**
+     * Invokes the method named by `methodName` on each element in the `collection`
+     * returning an array of the results of each invoked method. Additional arguments
+     * will be provided to each invoked method. If `methodName` is a function it
+     * will be invoked for, and `this` bound to, each element in the `collection`.
+     *
+     * @static
+     * @memberOf _
+     * @category Collections
+     * @param {Array|Object|string} collection The collection to iterate over.
+     * @param {Function|string} methodName The name of the method to invoke or
+     *  the function invoked per iteration.
+     * @param {...*} [arg] Arguments to invoke the method with.
+     * @returns {Array} Returns a new array of the results of each invoked method.
+     * @example
+     *
+     * _.invoke([[5, 1, 7], [3, 2, 1]], 'sort');
+     * // => [[1, 5, 7], [1, 2, 3]]
+     *
+     * _.invoke([123, 456], String.prototype.split, '');
+     * // => [['1', '2', '3'], ['4', '5', '6']]
+     */
+    function invoke(collection, methodName) {
+      var args = slice(arguments, 2),
+          index = -1,
+          isFunc = typeof methodName == 'function',
+          length = collection ? collection.length : 0,
+          result = Array(typeof length == 'number' ? length : 0);
+
+      forEach(collection, function(value) {
+        result[++index] = (isFunc ? methodName : value[methodName]).apply(value, args);
+      });
+      return result;
+    }
+
+    /**
+     * Creates an array of values by running each element in the collection
+     * through the callback. The callback is bound to `thisArg` and invoked with
+     * three arguments; (value, index|key, collection).
+     *
+     * If a property name is provided for `callback` the created "_.pluck" style
+     * callback will return the property value of the given element.
+     *
+     * If an object is provided for `callback` the created "_.where" style callback
+     * will return `true` for elements that have the properties of the given object,
+     * else `false`.
+     *
+     * @static
+     * @memberOf _
+     * @alias collect
+     * @category Collections
+     * @param {Array|Object|string} collection The collection to iterate over.
+     * @param {Function|Object|string} [callback=identity] The function called
+     *  per iteration. If a property name or object is provided it will be used
+     *  to create a "_.pluck" or "_.where" style callback, respectively.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {Array} Returns a new array of the results of each `callback` execution.
+     * @example
+     *
+     * _.map([1, 2, 3], function(num) { return num * 3; });
+     * // => [3, 6, 9]
+     *
+     * _.map({ 'one': 1, 'two': 2, 'three': 3 }, function(num) { return num * 3; });
+     * // => [3, 6, 9] (property order is not guaranteed across environments)
+     *
+     * var characters = [
+     *   { 'name': 'barney', 'age': 36 },
+     *   { 'name': 'fred',   'age': 40 }
+     * ];
+     *
+     * // using "_.pluck" callback shorthand
+     * _.map(characters, 'name');
+     * // => ['barney', 'fred']
+     */
+    function map(collection, callback, thisArg) {
+      var index = -1,
+          length = collection ? collection.length : 0;
+
+      callback = lodash.createCallback(callback, thisArg, 3);
+      if (typeof length == 'number') {
+        var result = Array(length);
+        while (++index < length) {
+          result[index] = callback(collection[index], index, collection);
+        }
+      } else {
+        result = [];
+        forOwn(collection, function(value, key, collection) {
+          result[++index] = callback(value, key, collection);
+        });
+      }
+      return result;
+    }
+
+    /**
+     * Retrieves the maximum value of a collection. If the collection is empty or
+     * falsey `-Infinity` is returned. If a callback is provided it will be executed
+     * for each value in the collection to generate the criterion by which the value
+     * is ranked. The callback is bound to `thisArg` and invoked with three
+     * arguments; (value, index, collection).
+     *
+     * If a property name is provided for `callback` the created "_.pluck" style
+     * callback will return the property value of the given element.
+     *
+     * If an object is provided for `callback` the created "_.where" style callback
+     * will return `true` for elements that have the properties of the given object,
+     * else `false`.
+     *
+     * @static
+     * @memberOf _
+     * @category Collections
+     * @param {Array|Object|string} collection The collection to iterate over.
+     * @param {Function|Object|string} [callback=identity] The function called
+     *  per iteration. If a property name or object is provided it will be used
+     *  to create a "_.pluck" or "_.where" style callback, respectively.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {*} Returns the maximum value.
+     * @example
+     *
+     * _.max([4, 2, 8, 6]);
+     * // => 8
+     *
+     * var characters = [
+     *   { 'name': 'barney', 'age': 36 },
+     *   { 'name': 'fred',   'age': 40 }
+     * ];
+     *
+     * _.max(characters, function(chr) { return chr.age; });
+     * // => { 'name': 'fred', 'age': 40 };
+     *
+     * // using "_.pluck" callback shorthand
+     * _.max(characters, 'age');
+     * // => { 'name': 'fred', 'age': 40 };
+     */
+    function max(collection, callback, thisArg) {
+      var computed = -Infinity,
+          result = computed;
+
+      // allows working with functions like `_.map` without using
+      // their `index` argument as a callback
+      if (typeof callback != 'function' && thisArg && thisArg[callback] === collection) {
+        callback = null;
+      }
+      if (callback == null && isArray(collection)) {
+        var index = -1,
+            length = collection.length;
+
+        while (++index < length) {
+          var value = collection[index];
+          if (value > result) {
+            result = value;
+          }
+        }
+      } else {
+        callback = (callback == null && isString(collection))
+          ? charAtCallback
+          : lodash.createCallback(callback, thisArg, 3);
+
+        forEach(collection, function(value, index, collection) {
+          var current = callback(value, index, collection);
+          if (current > computed) {
+            computed = current;
+            result = value;
+          }
+        });
+      }
+      return result;
+    }
+
+    /**
+     * Retrieves the minimum value of a collection. If the collection is empty or
+     * falsey `Infinity` is returned. If a callback is provided it will be executed
+     * for each value in the collection to generate the criterion by which the value
+     * is ranked. The callback is bound to `thisArg` and invoked with three
+     * arguments; (value, index, collection).
+     *
+     * If a property name is provided for `callback` the created "_.pluck" style
+     * callback will return the property value of the given element.
+     *
+     * If an object is provided for `callback` the created "_.where" style callback
+     * will return `true` for elements that have the properties of the given object,
+     * else `false`.
+     *
+     * @static
+     * @memberOf _
+     * @category Collections
+     * @param {Array|Object|string} collection The collection to iterate over.
+     * @param {Function|Object|string} [callback=identity] The function called
+     *  per iteration. If a property name or object is provided it will be used
+     *  to create a "_.pluck" or "_.where" style callback, respectively.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {*} Returns the minimum value.
+     * @example
+     *
+     * _.min([4, 2, 8, 6]);
+     * // => 2
+     *
+     * var characters = [
+     *   { 'name': 'barney', 'age': 36 },
+     *   { 'name': 'fred',   'age': 40 }
+     * ];
+     *
+     * _.min(characters, function(chr) { return chr.age; });
+     * // => { 'name': 'barney', 'age': 36 };
+     *
+     * // using "_.pluck" callback shorthand
+     * _.min(characters, 'age');
+     * // => { 'name': 'barney', 'age': 36 };
+     */
+    function min(collection, callback, thisArg) {
+      var computed = Infinity,
+          result = computed;
+
+      // allows working with functions like `_.map` without using
+      // their `index` argument as a callback
+      if (typeof callback != 'function' && thisArg && thisArg[callback] === collection) {
+        callback = null;
+      }
+      if (callback == null && isArray(collection)) {
+        var index = -1,
+            length = collection.length;
+
+        while (++index < length) {
+          var value = collection[index];
+          if (value < result) {
+            result = value;
+          }
+        }
+      } else {
+        callback = (callback == null && isString(collection))
+          ? charAtCallback
+          : lodash.createCallback(callback, thisArg, 3);
+
+        forEach(collection, function(value, index, collection) {
+          var current = callback(value, index, collection);
+          if (current < computed) {
+            computed = current;
+            result = value;
+          }
+        });
+      }
+      return result;
+    }
+
+    /**
+     * Retrieves the value of a specified property from all elements in the collection.
+     *
+     * @static
+     * @memberOf _
+     * @type Function
+     * @category Collections
+     * @param {Array|Object|string} collection The collection to iterate over.
+     * @param {string} property The name of the property to pluck.
+     * @returns {Array} Returns a new array of property values.
+     * @example
+     *
+     * var characters = [
+     *   { 'name': 'barney', 'age': 36 },
+     *   { 'name': 'fred',   'age': 40 }
+     * ];
+     *
+     * _.pluck(characters, 'name');
+     * // => ['barney', 'fred']
+     */
+    var pluck = map;
+
+    /**
+     * Reduces a collection to a value which is the accumulated result of running
+     * each element in the collection through the callback, where each successive
+     * callback execution consumes the return value of the previous execution. If
+     * `accumulator` is not provided the first element of the collection will be
+     * used as the initial `accumulator` value. The callback is bound to `thisArg`
+     * and invoked with four arguments; (accumulator, value, index|key, collection).
+     *
+     * @static
+     * @memberOf _
+     * @alias foldl, inject
+     * @category Collections
+     * @param {Array|Object|string} collection The collection to iterate over.
+     * @param {Function} [callback=identity] The function called per iteration.
+     * @param {*} [accumulator] Initial value of the accumulator.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {*} Returns the accumulated value.
+     * @example
+     *
+     * var sum = _.reduce([1, 2, 3], function(sum, num) {
+     *   return sum + num;
+     * });
+     * // => 6
+     *
+     * var mapped = _.reduce({ 'a': 1, 'b': 2, 'c': 3 }, function(result, num, key) {
+     *   result[key] = num * 3;
+     *   return result;
+     * }, {});
+     * // => { 'a': 3, 'b': 6, 'c': 9 }
+     */
+    function reduce(collection, callback, accumulator, thisArg) {
+      if (!collection) return accumulator;
+      var noaccum = arguments.length < 3;
+      callback = lodash.createCallback(callback, thisArg, 4);
+
+      var index = -1,
+          length = collection.length;
+
+      if (typeof length == 'number') {
+        if (noaccum) {
+          accumulator = collection[++index];
+        }
+        while (++index < length) {
+          accumulator = callback(accumulator, collection[index], index, collection);
+        }
+      } else {
+        forOwn(collection, function(value, index, collection) {
+          accumulator = noaccum
+            ? (noaccum = false, value)
+            : callback(accumulator, value, index, collection)
+        });
+      }
+      return accumulator;
+    }
+
+    /**
+     * This method is like `_.reduce` except that it iterates over elements
+     * of a `collection` from right to left.
+     *
+     * @static
+     * @memberOf _
+     * @alias foldr
+     * @category Collections
+     * @param {Array|Object|string} collection The collection to iterate over.
+     * @param {Function} [callback=identity] The function called per iteration.
+     * @param {*} [accumulator] Initial value of the accumulator.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {*} Returns the accumulated value.
+     * @example
+     *
+     * var list = [[0, 1], [2, 3], [4, 5]];
+     * var flat = _.reduceRight(list, function(a, b) { return a.concat(b); }, []);
+     * // => [4, 5, 2, 3, 0, 1]
+     */
+    function reduceRight(collection, callback, accumulator, thisArg) {
+      var noaccum = arguments.length < 3;
+      callback = lodash.createCallback(callback, thisArg, 4);
+      forEachRight(collection, function(value, index, collection) {
+        accumulator = noaccum
+          ? (noaccum = false, value)
+          : callback(accumulator, value, index, collection);
+      });
+      return accumulator;
+    }
+
+    /**
+     * The opposite of `_.filter` this method returns the elements of a
+     * collection that the callback does **not** return truey for.
+     *
+     * If a property name is provided for `callback` the created "_.pluck" style
+     * callback will return the property value of the given element.
+     *
+     * If an object is provided for `callback` the created "_.where" style callback
+     * will return `true` for elements that have the properties of the given object,
+     * else `false`.
+     *
+     * @static
+     * @memberOf _
+     * @category Collections
+     * @param {Array|Object|string} collection The collection to iterate over.
+     * @param {Function|Object|string} [callback=identity] The function called
+     *  per iteration. If a property name or object is provided it will be used
+     *  to create a "_.pluck" or "_.where" style callback, respectively.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {Array} Returns a new array of elements that failed the callback check.
+     * @example
+     *
+     * var odds = _.reject([1, 2, 3, 4, 5, 6], function(num) { return num % 2 == 0; });
+     * // => [1, 3, 5]
+     *
+     * var characters = [
+     *   { 'name': 'barney', 'age': 36, 'blocked': false },
+     *   { 'name': 'fred',   'age': 40, 'blocked': true }
+     * ];
+     *
+     * // using "_.pluck" callback shorthand
+     * _.reject(characters, 'blocked');
+     * // => [{ 'name': 'barney', 'age': 36, 'blocked': false }]
+     *
+     * // using "_.where" callback shorthand
+     * _.reject(characters, { 'age': 36 });
+     * // => [{ 'name': 'fred', 'age': 40, 'blocked': true }]
+     */
+    function reject(collection, callback, thisArg) {
+      callback = lodash.createCallback(callback, thisArg, 3);
+      return filter(collection, function(value, index, collection) {
+        return !callback(value, index, collection);
+      });
+    }
+
+    /**
+     * Retrieves a random element or `n` random elements from a collection.
+     *
+     * @static
+     * @memberOf _
+     * @category Collections
+     * @param {Array|Object|string} collection The collection to sample.
+     * @param {number} [n] The number of elements to sample.
+     * @param- {Object} [guard] Allows working with functions like `_.map`
+     *  without using their `index` arguments as `n`.
+     * @returns {Array} Returns the random sample(s) of `collection`.
+     * @example
+     *
+     * _.sample([1, 2, 3, 4]);
+     * // => 2
+     *
+     * _.sample([1, 2, 3, 4], 2);
+     * // => [3, 1]
+     */
+    function sample(collection, n, guard) {
+      if (collection && typeof collection.length != 'number') {
+        collection = values(collection);
+      }
+      if (n == null || guard) {
+        return collection ? collection[baseRandom(0, collection.length - 1)] : undefined;
+      }
+      var result = shuffle(collection);
+      result.length = nativeMin(nativeMax(0, n), result.length);
+      return result;
+    }
+
+    /**
+     * Creates an array of shuffled values, using a version of the Fisher-Yates
+     * shuffle. See http://en.wikipedia.org/wiki/Fisher-Yates_shuffle.
+     *
+     * @static
+     * @memberOf _
+     * @category Collections
+     * @param {Array|Object|string} collection The collection to shuffle.
+     * @returns {Array} Returns a new shuffled collection.
+     * @example
+     *
+     * _.shuffle([1, 2, 3, 4, 5, 6]);
+     * // => [4, 1, 6, 3, 5, 2]
+     */
+    function shuffle(collection) {
+      var index = -1,
+          length = collection ? collection.length : 0,
+          result = Array(typeof length == 'number' ? length : 0);
+
+      forEach(collection, function(value) {
+        var rand = baseRandom(0, ++index);
+        result[index] = result[rand];
+        result[rand] = value;
+      });
+      return result;
+    }
+
+    /**
+     * Gets the size of the `collection` by returning `collection.length` for arrays
+     * and array-like objects or the number of own enumerable properties for objects.
+     *
+     * @static
+     * @memberOf _
+     * @category Collections
+     * @param {Array|Object|string} collection The collection to inspect.
+     * @returns {number} Returns `collection.length` or number of own enumerable properties.
+     * @example
+     *
+     * _.size([1, 2]);
+     * // => 2
+     *
+     * _.size({ 'one': 1, 'two': 2, 'three': 3 });
+     * // => 3
+     *
+     * _.size('pebbles');
+     * // => 7
+     */
+    function size(collection) {
+      var length = collection ? collection.length : 0;
+      return typeof length == 'number' ? length : keys(collection).length;
+    }
+
+    /**
+     * Checks if the callback returns a truey value for **any** element of a
+     * collection. The function returns as soon as it finds a passing value and
+     * does not iterate over the entire collection. The callback is bound to
+     * `thisArg` and invoked with three arguments; (value, index|key, collection).
+     *
+     * If a property name is provided for `callback` the created "_.pluck" style
+     * callback will return the property value of the given element.
+     *
+     * If an object is provided for `callback` the created "_.where" style callback
+     * will return `true` for elements that have the properties of the given object,
+     * else `false`.
+     *
+     * @static
+     * @memberOf _
+     * @alias any
+     * @category Collections
+     * @param {Array|Object|string} collection The collection to iterate over.
+     * @param {Function|Object|string} [callback=identity] The function called
+     *  per iteration. If a property name or object is provided it will be used
+     *  to create a "_.pluck" or "_.where" style callback, respectively.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {boolean} Returns `true` if any element passed the callback check,
+     *  else `false`.
+     * @example
+     *
+     * _.some([null, 0, 'yes', false], Boolean);
+     * // => true
+     *
+     * var characters = [
+     *   { 'name': 'barney', 'age': 36, 'blocked': false },
+     *   { 'name': 'fred',   'age': 40, 'blocked': true }
+     * ];
+     *
+     * // using "_.pluck" callback shorthand
+     * _.some(characters, 'blocked');
+     * // => true
+     *
+     * // using "_.where" callback shorthand
+     * _.some(characters, { 'age': 1 });
+     * // => false
+     */
+    function some(collection, callback, thisArg) {
+      var result;
+      callback = lodash.createCallback(callback, thisArg, 3);
+
+      var index = -1,
+          length = collection ? collection.length : 0;
+
+      if (typeof length == 'number') {
+        while (++index < length) {
+          if ((result = callback(collection[index], index, collection))) {
+            break;
+          }
+        }
+      } else {
+        forOwn(collection, function(value, index, collection) {
+          return !(result = callback(value, index, collection));
+        });
+      }
+      return !!result;
+    }
+
+    /**
+     * Creates an array of elements, sorted in ascending order by the results of
+     * running each element in a collection through the callback. This method
+     * performs a stable sort, that is, it will preserve the original sort order
+     * of equal elements. The callback is bound to `thisArg` and invoked with
+     * three arguments; (value, index|key, collection).
+     *
+     * If a property name is provided for `callback` the created "_.pluck" style
+     * callback will return the property value of the given element.
+     *
+     * If an array of property names is provided for `callback` the collection
+     * will be sorted by each property value.
+     *
+     * If an object is provided for `callback` the created "_.where" style callback
+     * will return `true` for elements that have the properties of the given object,
+     * else `false`.
+     *
+     * @static
+     * @memberOf _
+     * @category Collections
+     * @param {Array|Object|string} collection The collection to iterate over.
+     * @param {Array|Function|Object|string} [callback=identity] The function called
+     *  per iteration. If a property name or object is provided it will be used
+     *  to create a "_.pluck" or "_.where" style callback, respectively.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {Array} Returns a new array of sorted elements.
+     * @example
+     *
+     * _.sortBy([1, 2, 3], function(num) { return Math.sin(num); });
+     * // => [3, 1, 2]
+     *
+     * _.sortBy([1, 2, 3], function(num) { return this.sin(num); }, Math);
+     * // => [3, 1, 2]
+     *
+     * var characters = [
+     *   { 'name': 'barney',  'age': 36 },
+     *   { 'name': 'fred',    'age': 40 },
+     *   { 'name': 'barney',  'age': 26 },
+     *   { 'name': 'fred',    'age': 30 }
+     * ];
+     *
+     * // using "_.pluck" callback shorthand
+     * _.map(_.sortBy(characters, 'age'), _.values);
+     * // => [['barney', 26], ['fred', 30], ['barney', 36], ['fred', 40]]
+     *
+     * // sorting by multiple properties
+     * _.map(_.sortBy(characters, ['name', 'age']), _.values);
+     * // = > [['barney', 26], ['barney', 36], ['fred', 30], ['fred', 40]]
+     */
+    function sortBy(collection, callback, thisArg) {
+      var index = -1,
+          isArr = isArray(callback),
+          length = collection ? collection.length : 0,
+          result = Array(typeof length == 'number' ? length : 0);
+
+      if (!isArr) {
+        callback = lodash.createCallback(callback, thisArg, 3);
+      }
+      forEach(collection, function(value, key, collection) {
+        var object = result[++index] = getObject();
+        if (isArr) {
+          object.criteria = map(callback, function(key) { return value[key]; });
+        } else {
+          (object.criteria = getArray())[0] = callback(value, key, collection);
+        }
+        object.index = index;
+        object.value = value;
+      });
+
+      length = result.length;
+      result.sort(compareAscending);
+      while (length--) {
+        var object = result[length];
+        result[length] = object.value;
+        if (!isArr) {
+          releaseArray(object.criteria);
+        }
+        releaseObject(object);
+      }
+      return result;
+    }
+
+    /**
+     * Converts the `collection` to an array.
+     *
+     * @static
+     * @memberOf _
+     * @category Collections
+     * @param {Array|Object|string} collection The collection to convert.
+     * @returns {Array} Returns the new converted array.
+     * @example
+     *
+     * (function() { return _.toArray(arguments).slice(1); })(1, 2, 3, 4);
+     * // => [2, 3, 4]
+     */
+    function toArray(collection) {
+      if (collection && typeof collection.length == 'number') {
+        return slice(collection);
+      }
+      return values(collection);
+    }
+
+    /**
+     * Performs a deep comparison of each element in a `collection` to the given
+     * `properties` object, returning an array of all elements that have equivalent
+     * property values.
+     *
+     * @static
+     * @memberOf _
+     * @type Function
+     * @category Collections
+     * @param {Array|Object|string} collection The collection to iterate over.
+     * @param {Object} props The object of property values to filter by.
+     * @returns {Array} Returns a new array of elements that have the given properties.
+     * @example
+     *
+     * var characters = [
+     *   { 'name': 'barney', 'age': 36, 'pets': ['hoppy'] },
+     *   { 'name': 'fred',   'age': 40, 'pets': ['baby puss', 'dino'] }
+     * ];
+     *
+     * _.where(characters, { 'age': 36 });
+     * // => [{ 'name': 'barney', 'age': 36, 'pets': ['hoppy'] }]
+     *
+     * _.where(characters, { 'pets': ['dino'] });
+     * // => [{ 'name': 'fred', 'age': 40, 'pets': ['baby puss', 'dino'] }]
+     */
+    var where = filter;
+
+    /*--------------------------------------------------------------------------*/
+
+    /**
+     * Creates an array with all falsey values removed. The values `false`, `null`,
+     * `0`, `""`, `undefined`, and `NaN` are all falsey.
+     *
+     * @static
+     * @memberOf _
+     * @category Arrays
+     * @param {Array} array The array to compact.
+     * @returns {Array} Returns a new array of filtered values.
+     * @example
+     *
+     * _.compact([0, 1, false, 2, '', 3]);
+     * // => [1, 2, 3]
+     */
+    function compact(array) {
+      var index = -1,
+          length = array ? array.length : 0,
+          result = [];
+
+      while (++index < length) {
+        var value = array[index];
+        if (value) {
+          result.push(value);
+        }
+      }
+      return result;
+    }
+
+    /**
+     * Creates an array excluding all values of the provided arrays using strict
+     * equality for comparisons, i.e. `===`.
+     *
+     * @static
+     * @memberOf _
+     * @category Arrays
+     * @param {Array} array The array to process.
+     * @param {...Array} [values] The arrays of values to exclude.
+     * @returns {Array} Returns a new array of filtered values.
+     * @example
+     *
+     * _.difference([1, 2, 3, 4, 5], [5, 2, 10]);
+     * // => [1, 3, 4]
+     */
+    function difference(array) {
+      return baseDifference(array, baseFlatten(arguments, true, true, 1));
+    }
+
+    /**
+     * This method is like `_.find` except that it returns the index of the first
+     * element that passes the callback check, instead of the element itself.
+     *
+     * If a property name is provided for `callback` the created "_.pluck" style
+     * callback will return the property value of the given element.
+     *
+     * If an object is provided for `callback` the created "_.where" style callback
+     * will return `true` for elements that have the properties of the given object,
+     * else `false`.
+     *
+     * @static
+     * @memberOf _
+     * @category Arrays
+     * @param {Array} array The array to search.
+     * @param {Function|Object|string} [callback=identity] The function called
+     *  per iteration. If a property name or object is provided it will be used
+     *  to create a "_.pluck" or "_.where" style callback, respectively.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {number} Returns the index of the found element, else `-1`.
+     * @example
+     *
+     * var characters = [
+     *   { 'name': 'barney',  'age': 36, 'blocked': false },
+     *   { 'name': 'fred',    'age': 40, 'blocked': true },
+     *   { 'name': 'pebbles', 'age': 1,  'blocked': false }
+     * ];
+     *
+     * _.findIndex(characters, function(chr) {
+     *   return chr.age < 20;
+     * });
+     * // => 2
+     *
+     * // using "_.where" callback shorthand
+     * _.findIndex(characters, { 'age': 36 });
+     * // => 0
+     *
+     * // using "_.pluck" callback shorthand
+     * _.findIndex(characters, 'blocked');
+     * // => 1
+     */
+    function findIndex(array, callback, thisArg) {
+      var index = -1,
+          length = array ? array.length : 0;
+
+      callback = lodash.createCallback(callback, thisArg, 3);
+      while (++index < length) {
+        if (callback(array[index], index, array)) {
+          return index;
+        }
+      }
+      return -1;
+    }
+
+    /**
+     * This method is like `_.findIndex` except that it iterates over elements
+     * of a `collection` from right to left.
+     *
+     * If a property name is provided for `callback` the created "_.pluck" style
+     * callback will return the property value of the given element.
+     *
+     * If an object is provided for `callback` the created "_.where" style callback
+     * will return `true` for elements that have the properties of the given object,
+     * else `false`.
+     *
+     * @static
+     * @memberOf _
+     * @category Arrays
+     * @param {Array} array The array to search.
+     * @param {Function|Object|string} [callback=identity] The function called
+     *  per iteration. If a property name or object is provided it will be used
+     *  to create a "_.pluck" or "_.where" style callback, respectively.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {number} Returns the index of the found element, else `-1`.
+     * @example
+     *
+     * var characters = [
+     *   { 'name': 'barney',  'age': 36, 'blocked': true },
+     *   { 'name': 'fred',    'age': 40, 'blocked': false },
+     *   { 'name': 'pebbles', 'age': 1,  'blocked': true }
+     * ];
+     *
+     * _.findLastIndex(characters, function(chr) {
+     *   return chr.age > 30;
+     * });
+     * // => 1
+     *
+     * // using "_.where" callback shorthand
+     * _.findLastIndex(characters, { 'age': 36 });
+     * // => 0
+     *
+     * // using "_.pluck" callback shorthand
+     * _.findLastIndex(characters, 'blocked');
+     * // => 2
+     */
+    function findLastIndex(array, callback, thisArg) {
+      var length = array ? array.length : 0;
+      callback = lodash.createCallback(callback, thisArg, 3);
+      while (length--) {
+        if (callback(array[length], length, array)) {
+          return length;
+        }
+      }
+      return -1;
+    }
+
+    /**
+     * Gets the first element or first `n` elements of an array. If a callback
+     * is provided elements at the beginning of the array are returned as long
+     * as the callback returns truey. The callback is bound to `thisArg` and
+     * invoked with three arguments; (value, index, array).
+     *
+     * If a property name is provided for `callback` the created "_.pluck" style
+     * callback will return the property value of the given element.
+     *
+     * If an object is provided for `callback` the created "_.where" style callback
+     * will return `true` for elements that have the properties of the given object,
+     * else `false`.
+     *
+     * @static
+     * @memberOf _
+     * @alias head, take
+     * @category Arrays
+     * @param {Array} array The array to query.
+     * @param {Function|Object|number|string} [callback] The function called
+     *  per element or the number of elements to return. If a property name or
+     *  object is provided it will be used to create a "_.pluck" or "_.where"
+     *  style callback, respectively.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {*} Returns the first element(s) of `array`.
+     * @example
+     *
+     * _.first([1, 2, 3]);
+     * // => 1
+     *
+     * _.first([1, 2, 3], 2);
+     * // => [1, 2]
+     *
+     * _.first([1, 2, 3], function(num) {
+     *   return num < 3;
+     * });
+     * // => [1, 2]
+     *
+     * var characters = [
+     *   { 'name': 'barney',  'blocked': true,  'employer': 'slate' },
+     *   { 'name': 'fred',    'blocked': false, 'employer': 'slate' },
+     *   { 'name': 'pebbles', 'blocked': true,  'employer': 'na' }
+     * ];
+     *
+     * // using "_.pluck" callback shorthand
+     * _.first(characters, 'blocked');
+     * // => [{ 'name': 'barney', 'blocked': true, 'employer': 'slate' }]
+     *
+     * // using "_.where" callback shorthand
+     * _.pluck(_.first(characters, { 'employer': 'slate' }), 'name');
+     * // => ['barney', 'fred']
+     */
+    function first(array, callback, thisArg) {
+      var n = 0,
+          length = array ? array.length : 0;
+
+      if (typeof callback != 'number' && callback != null) {
+        var index = -1;
+        callback = lodash.createCallback(callback, thisArg, 3);
+        while (++index < length && callback(array[index], index, array)) {
+          n++;
+        }
+      } else {
+        n = callback;
+        if (n == null || thisArg) {
+          return array ? array[0] : undefined;
+        }
+      }
+      return slice(array, 0, nativeMin(nativeMax(0, n), length));
+    }
+
+    /**
+     * Flattens a nested array (the nesting can be to any depth). If `isShallow`
+     * is truey, the array will only be flattened a single level. If a callback
+     * is provided each element of the array is passed through the callback before
+     * flattening. The callback is bound to `thisArg` and invoked with three
+     * arguments; (value, index, array).
+     *
+     * If a property name is provided for `callback` the created "_.pluck" style
+     * callback will return the property value of the given element.
+     *
+     * If an object is provided for `callback` the created "_.where" style callback
+     * will return `true` for elements that have the properties of the given object,
+     * else `false`.
+     *
+     * @static
+     * @memberOf _
+     * @category Arrays
+     * @param {Array} array The array to flatten.
+     * @param {boolean} [isShallow=false] A flag to restrict flattening to a single level.
+     * @param {Function|Object|string} [callback=identity] The function called
+     *  per iteration. If a property name or object is provided it will be used
+     *  to create a "_.pluck" or "_.where" style callback, respectively.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {Array} Returns a new flattened array.
+     * @example
+     *
+     * _.flatten([1, [2], [3, [[4]]]]);
+     * // => [1, 2, 3, 4];
+     *
+     * _.flatten([1, [2], [3, [[4]]]], true);
+     * // => [1, 2, 3, [[4]]];
+     *
+     * var characters = [
+     *   { 'name': 'barney', 'age': 30, 'pets': ['hoppy'] },
+     *   { 'name': 'fred',   'age': 40, 'pets': ['baby puss', 'dino'] }
+     * ];
+     *
+     * // using "_.pluck" callback shorthand
+     * _.flatten(characters, 'pets');
+     * // => ['hoppy', 'baby puss', 'dino']
+     */
+    function flatten(array, isShallow, callback, thisArg) {
+      // juggle arguments
+      if (typeof isShallow != 'boolean' && isShallow != null) {
+        thisArg = callback;
+        callback = (typeof isShallow != 'function' && thisArg && thisArg[isShallow] === array) ? null : isShallow;
+        isShallow = false;
+      }
+      if (callback != null) {
+        array = map(array, callback, thisArg);
+      }
+      return baseFlatten(array, isShallow);
+    }
+
+    /**
+     * Gets the index at which the first occurrence of `value` is found using
+     * strict equality for comparisons, i.e. `===`. If the array is already sorted
+     * providing `true` for `fromIndex` will run a faster binary search.
+     *
+     * @static
+     * @memberOf _
+     * @category Arrays
+     * @param {Array} array The array to search.
+     * @param {*} value The value to search for.
+     * @param {boolean|number} [fromIndex=0] The index to search from or `true`
+     *  to perform a binary search on a sorted array.
+     * @returns {number} Returns the index of the matched value or `-1`.
+     * @example
+     *
+     * _.indexOf([1, 2, 3, 1, 2, 3], 2);
+     * // => 1
+     *
+     * _.indexOf([1, 2, 3, 1, 2, 3], 2, 3);
+     * // => 4
+     *
+     * _.indexOf([1, 1, 2, 2, 3, 3], 2, true);
+     * // => 2
+     */
+    function indexOf(array, value, fromIndex) {
+      if (typeof fromIndex == 'number') {
+        var length = array ? array.length : 0;
+        fromIndex = (fromIndex < 0 ? nativeMax(0, length + fromIndex) : fromIndex || 0);
+      } else if (fromIndex) {
+        var index = sortedIndex(array, value);
+        return array[index] === value ? index : -1;
+      }
+      return baseIndexOf(array, value, fromIndex);
+    }
+
+    /**
+     * Gets all but the last element or last `n` elements of an array. If a
+     * callback is provided elements at the end of the array are excluded from
+     * the result as long as the callback returns truey. The callback is bound
+     * to `thisArg` and invoked with three arguments; (value, index, array).
+     *
+     * If a property name is provided for `callback` the created "_.pluck" style
+     * callback will return the property value of the given element.
+     *
+     * If an object is provided for `callback` the created "_.where" style callback
+     * will return `true` for elements that have the properties of the given object,
+     * else `false`.
+     *
+     * @static
+     * @memberOf _
+     * @category Arrays
+     * @param {Array} array The array to query.
+     * @param {Function|Object|number|string} [callback=1] The function called
+     *  per element or the number of elements to exclude. If a property name or
+     *  object is provided it will be used to create a "_.pluck" or "_.where"
+     *  style callback, respectively.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {Array} Returns a slice of `array`.
+     * @example
+     *
+     * _.initial([1, 2, 3]);
+     * // => [1, 2]
+     *
+     * _.initial([1, 2, 3], 2);
+     * // => [1]
+     *
+     * _.initial([1, 2, 3], function(num) {
+     *   return num > 1;
+     * });
+     * // => [1]
+     *
+     * var characters = [
+     *   { 'name': 'barney',  'blocked': false, 'employer': 'slate' },
+     *   { 'name': 'fred',    'blocked': true,  'employer': 'slate' },
+     *   { 'name': 'pebbles', 'blocked': true,  'employer': 'na' }
+     * ];
+     *
+     * // using "_.pluck" callback shorthand
+     * _.initial(characters, 'blocked');
+     * // => [{ 'name': 'barney',  'blocked': false, 'employer': 'slate' }]
+     *
+     * // using "_.where" callback shorthand
+     * _.pluck(_.initial(characters, { 'employer': 'na' }), 'name');
+     * // => ['barney', 'fred']
+     */
+    function initial(array, callback, thisArg) {
+      var n = 0,
+          length = array ? array.length : 0;
+
+      if (typeof callback != 'number' && callback != null) {
+        var index = length;
+        callback = lodash.createCallback(callback, thisArg, 3);
+        while (index-- && callback(array[index], index, array)) {
+          n++;
+        }
+      } else {
+        n = (callback == null || thisArg) ? 1 : callback || n;
+      }
+      return slice(array, 0, nativeMin(nativeMax(0, length - n), length));
+    }
+
+    /**
+     * Creates an array of unique values present in all provided arrays using
+     * strict equality for comparisons, i.e. `===`.
+     *
+     * @static
+     * @memberOf _
+     * @category Arrays
+     * @param {...Array} [array] The arrays to inspect.
+     * @returns {Array} Returns an array of shared values.
+     * @example
+     *
+     * _.intersection([1, 2, 3], [5, 2, 1, 4], [2, 1]);
+     * // => [1, 2]
+     */
+    function intersection() {
+      var args = [],
+          argsIndex = -1,
+          argsLength = arguments.length,
+          caches = getArray(),
+          indexOf = getIndexOf(),
+          trustIndexOf = indexOf === baseIndexOf,
+          seen = getArray();
+
+      while (++argsIndex < argsLength) {
+        var value = arguments[argsIndex];
+        if (isArray(value) || isArguments(value)) {
+          args.push(value);
+          caches.push(trustIndexOf && value.length >= largeArraySize &&
+            createCache(argsIndex ? args[argsIndex] : seen));
+        }
+      }
+      var array = args[0],
+          index = -1,
+          length = array ? array.length : 0,
+          result = [];
+
+      outer:
+      while (++index < length) {
+        var cache = caches[0];
+        value = array[index];
+
+        if ((cache ? cacheIndexOf(cache, value) : indexOf(seen, value)) < 0) {
+          argsIndex = argsLength;
+          (cache || seen).push(value);
+          while (--argsIndex) {
+            cache = caches[argsIndex];
+            if ((cache ? cacheIndexOf(cache, value) : indexOf(args[argsIndex], value)) < 0) {
+              continue outer;
+            }
+          }
+          result.push(value);
+        }
+      }
+      while (argsLength--) {
+        cache = caches[argsLength];
+        if (cache) {
+          releaseObject(cache);
+        }
+      }
+      releaseArray(caches);
+      releaseArray(seen);
+      return result;
+    }
+
+    /**
+     * Gets the last element or last `n` elements of an array. If a callback is
+     * provided elements at the end of the array are returned as long as the
+     * callback returns truey. The callback is bound to `thisArg` and invoked
+     * with three arguments; (value, index, array).
+     *
+     * If a property name is provided for `callback` the created "_.pluck" style
+     * callback will return the property value of the given element.
+     *
+     * If an object is provided for `callback` the created "_.where" style callback
+     * will return `true` for elements that have the properties of the given object,
+     * else `false`.
+     *
+     * @static
+     * @memberOf _
+     * @category Arrays
+     * @param {Array} array The array to query.
+     * @param {Function|Object|number|string} [callback] The function called
+     *  per element or the number of elements to return. If a property name or
+     *  object is provided it will be used to create a "_.pluck" or "_.where"
+     *  style callback, respectively.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {*} Returns the last element(s) of `array`.
+     * @example
+     *
+     * _.last([1, 2, 3]);
+     * // => 3
+     *
+     * _.last([1, 2, 3], 2);
+     * // => [2, 3]
+     *
+     * _.last([1, 2, 3], function(num) {
+     *   return num > 1;
+     * });
+     * // => [2, 3]
+     *
+     * var characters = [
+     *   { 'name': 'barney',  'blocked': false, 'employer': 'slate' },
+     *   { 'name': 'fred',    'blocked': true,  'employer': 'slate' },
+     *   { 'name': 'pebbles', 'blocked': true,  'employer': 'na' }
+     * ];
+     *
+     * // using "_.pluck" callback shorthand
+     * _.pluck(_.last(characters, 'blocked'), 'name');
+     * // => ['fred', 'pebbles']
+     *
+     * // using "_.where" callback shorthand
+     * _.last(characters, { 'employer': 'na' });
+     * // => [{ 'name': 'pebbles', 'blocked': true, 'employer': 'na' }]
+     */
+    function last(array, callback, thisArg) {
+      var n = 0,
+          length = array ? array.length : 0;
+
+      if (typeof callback != 'number' && callback != null) {
+        var index = length;
+        callback = lodash.createCallback(callback, thisArg, 3);
+        while (index-- && callback(array[index], index, array)) {
+          n++;
+        }
+      } else {
+        n = callback;
+        if (n == null || thisArg) {
+          return array ? array[length - 1] : undefined;
+        }
+      }
+      return slice(array, nativeMax(0, length - n));
+    }
+
+    /**
+     * Gets the index at which the last occurrence of `value` is found using strict
+     * equality for comparisons, i.e. `===`. If `fromIndex` is negative, it is used
+     * as the offset from the end of the collection.
+     *
+     * If a property name is provided for `callback` the created "_.pluck" style
+     * callback will return the property value of the given element.
+     *
+     * If an object is provided for `callback` the created "_.where" style callback
+     * will return `true` for elements that have the properties of the given object,
+     * else `false`.
+     *
+     * @static
+     * @memberOf _
+     * @category Arrays
+     * @param {Array} array The array to search.
+     * @param {*} value The value to search for.
+     * @param {number} [fromIndex=array.length-1] The index to search from.
+     * @returns {number} Returns the index of the matched value or `-1`.
+     * @example
+     *
+     * _.lastIndexOf([1, 2, 3, 1, 2, 3], 2);
+     * // => 4
+     *
+     * _.lastIndexOf([1, 2, 3, 1, 2, 3], 2, 3);
+     * // => 1
+     */
+    function lastIndexOf(array, value, fromIndex) {
+      var index = array ? array.length : 0;
+      if (typeof fromIndex == 'number') {
+        index = (fromIndex < 0 ? nativeMax(0, index + fromIndex) : nativeMin(fromIndex, index - 1)) + 1;
+      }
+      while (index--) {
+        if (array[index] === value) {
+          return index;
+        }
+      }
+      return -1;
+    }
+
+    /**
+     * Removes all provided values from the given array using strict equality for
+     * comparisons, i.e. `===`.
+     *
+     * @static
+     * @memberOf _
+     * @category Arrays
+     * @param {Array} array The array to modify.
+     * @param {...*} [value] The values to remove.
+     * @returns {Array} Returns `array`.
+     * @example
+     *
+     * var array = [1, 2, 3, 1, 2, 3];
+     * _.pull(array, 2, 3);
+     * console.log(array);
+     * // => [1, 1]
+     */
+    function pull(array) {
+      var args = arguments,
+          argsIndex = 0,
+          argsLength = args.length,
+          length = array ? array.length : 0;
+
+      while (++argsIndex < argsLength) {
+        var index = -1,
+            value = args[argsIndex];
+        while (++index < length) {
+          if (array[index] === value) {
+            splice.call(array, index--, 1);
+            length--;
+          }
+        }
+      }
+      return array;
+    }
+
+    /**
+     * Creates an array of numbers (positive and/or negative) progressing from
+     * `start` up to but not including `end`. If `start` is less than `stop` a
+     * zero-length range is created unless a negative `step` is specified.
+     *
+     * @static
+     * @memberOf _
+     * @category Arrays
+     * @param {number} [start=0] The start of the range.
+     * @param {number} end The end of the range.
+     * @param {number} [step=1] The value to increment or decrement by.
+     * @returns {Array} Returns a new range array.
+     * @example
+     *
+     * _.range(4);
+     * // => [0, 1, 2, 3]
+     *
+     * _.range(1, 5);
+     * // => [1, 2, 3, 4]
+     *
+     * _.range(0, 20, 5);
+     * // => [0, 5, 10, 15]
+     *
+     * _.range(0, -4, -1);
+     * // => [0, -1, -2, -3]
+     *
+     * _.range(1, 4, 0);
+     * // => [1, 1, 1]
+     *
+     * _.range(0);
+     * // => []
+     */
+    function range(start, end, step) {
+      start = +start || 0;
+      step = typeof step == 'number' ? step : (+step || 1);
+
+      if (end == null) {
+        end = start;
+        start = 0;
+      }
+      // use `Array(length)` so engines like Chakra and V8 avoid slower modes
+      // http://youtu.be/XAqIpGU8ZZk#t=17m25s
+      var index = -1,
+          length = nativeMax(0, ceil((end - start) / (step || 1))),
+          result = Array(length);
+
+      while (++index < length) {
+        result[index] = start;
+        start += step;
+      }
+      return result;
+    }
+
+    /**
+     * Removes all elements from an array that the callback returns truey for
+     * and returns an array of removed elements. The callback is bound to `thisArg`
+     * and invoked with three arguments; (value, index, array).
+     *
+     * If a property name is provided for `callback` the created "_.pluck" style
+     * callback will return the property value of the given element.
+     *
+     * If an object is provided for `callback` the created "_.where" style callback
+     * will return `true` for elements that have the properties of the given object,
+     * else `false`.
+     *
+     * @static
+     * @memberOf _
+     * @category Arrays
+     * @param {Array} array The array to modify.
+     * @param {Function|Object|string} [callback=identity] The function called
+     *  per iteration. If a property name or object is provided it will be used
+     *  to create a "_.pluck" or "_.where" style callback, respectively.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {Array} Returns a new array of removed elements.
+     * @example
+     *
+     * var array = [1, 2, 3, 4, 5, 6];
+     * var evens = _.remove(array, function(num) { return num % 2 == 0; });
+     *
+     * console.log(array);
+     * // => [1, 3, 5]
+     *
+     * console.log(evens);
+     * // => [2, 4, 6]
+     */
+    function remove(array, callback, thisArg) {
+      var index = -1,
+          length = array ? array.length : 0,
+          result = [];
+
+      callback = lodash.createCallback(callback, thisArg, 3);
+      while (++index < length) {
+        var value = array[index];
+        if (callback(value, index, array)) {
+          result.push(value);
+          splice.call(array, index--, 1);
+          length--;
+        }
+      }
+      return result;
+    }
+
+    /**
+     * The opposite of `_.initial` this method gets all but the first element or
+     * first `n` elements of an array. If a callback function is provided elements
+     * at the beginning of the array are excluded from the result as long as the
+     * callback returns truey. The callback is bound to `thisArg` and invoked
+     * with three arguments; (value, index, array).
+     *
+     * If a property name is provided for `callback` the created "_.pluck" style
+     * callback will return the property value of the given element.
+     *
+     * If an object is provided for `callback` the created "_.where" style callback
+     * will return `true` for elements that have the properties of the given object,
+     * else `false`.
+     *
+     * @static
+     * @memberOf _
+     * @alias drop, tail
+     * @category Arrays
+     * @param {Array} array The array to query.
+     * @param {Function|Object|number|string} [callback=1] The function called
+     *  per element or the number of elements to exclude. If a property name or
+     *  object is provided it will be used to create a "_.pluck" or "_.where"
+     *  style callback, respectively.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {Array} Returns a slice of `array`.
+     * @example
+     *
+     * _.rest([1, 2, 3]);
+     * // => [2, 3]
+     *
+     * _.rest([1, 2, 3], 2);
+     * // => [3]
+     *
+     * _.rest([1, 2, 3], function(num) {
+     *   return num < 3;
+     * });
+     * // => [3]
+     *
+     * var characters = [
+     *   { 'name': 'barney',  'blocked': true,  'employer': 'slate' },
+     *   { 'name': 'fred',    'blocked': false,  'employer': 'slate' },
+     *   { 'name': 'pebbles', 'blocked': true, 'employer': 'na' }
+     * ];
+     *
+     * // using "_.pluck" callback shorthand
+     * _.pluck(_.rest(characters, 'blocked'), 'name');
+     * // => ['fred', 'pebbles']
+     *
+     * // using "_.where" callback shorthand
+     * _.rest(characters, { 'employer': 'slate' });
+     * // => [{ 'name': 'pebbles', 'blocked': true, 'employer': 'na' }]
+     */
+    function rest(array, callback, thisArg) {
+      if (typeof callback != 'number' && callback != null) {
+        var n = 0,
+            index = -1,
+            length = array ? array.length : 0;
+
+        callback = lodash.createCallback(callback, thisArg, 3);
+        while (++index < length && callback(array[index], index, array)) {
+          n++;
+        }
+      } else {
+        n = (callback == null || thisArg) ? 1 : nativeMax(0, callback);
+      }
+      return slice(array, n);
+    }
+
+    /**
+     * Uses a binary search to determine the smallest index at which a value
+     * should be inserted into a given sorted array in order to maintain the sort
+     * order of the array. If a callback is provided it will be executed for
+     * `value` and each element of `array` to compute their sort ranking. The
+     * callback is bound to `thisArg` and invoked with one argument; (value).
+     *
+     * If a property name is provided for `callback` the created "_.pluck" style
+     * callback will return the property value of the given element.
+     *
+     * If an object is provided for `callback` the created "_.where" style callback
+     * will return `true` for elements that have the properties of the given object,
+     * else `false`.
+     *
+     * @static
+     * @memberOf _
+     * @category Arrays
+     * @param {Array} array The array to inspect.
+     * @param {*} value The value to evaluate.
+     * @param {Function|Object|string} [callback=identity] The function called
+     *  per iteration. If a property name or object is provided it will be used
+     *  to create a "_.pluck" or "_.where" style callback, respectively.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {number} Returns the index at which `value` should be inserted
+     *  into `array`.
+     * @example
+     *
+     * _.sortedIndex([20, 30, 50], 40);
+     * // => 2
+     *
+     * // using "_.pluck" callback shorthand
+     * _.sortedIndex([{ 'x': 20 }, { 'x': 30 }, { 'x': 50 }], { 'x': 40 }, 'x');
+     * // => 2
+     *
+     * var dict = {
+     *   'wordToNumber': { 'twenty': 20, 'thirty': 30, 'fourty': 40, 'fifty': 50 }
+     * };
+     *
+     * _.sortedIndex(['twenty', 'thirty', 'fifty'], 'fourty', function(word) {
+     *   return dict.wordToNumber[word];
+     * });
+     * // => 2
+     *
+     * _.sortedIndex(['twenty', 'thirty', 'fifty'], 'fourty', function(word) {
+     *   return this.wordToNumber[word];
+     * }, dict);
+     * // => 2
+     */
+    function sortedIndex(array, value, callback, thisArg) {
+      var low = 0,
+          high = array ? array.length : low;
+
+      // explicitly reference `identity` for better inlining in Firefox
+      callback = callback ? lodash.createCallback(callback, thisArg, 1) : identity;
+      value = callback(value);
+
+      while (low < high) {
+        var mid = (low + high) >>> 1;
+        (callback(array[mid]) < value)
+          ? low = mid + 1
+          : high = mid;
+      }
+      return low;
+    }
+
+    /**
+     * Creates an array of unique values, in order, of the provided arrays using
+     * strict equality for comparisons, i.e. `===`.
+     *
+     * @static
+     * @memberOf _
+     * @category Arrays
+     * @param {...Array} [array] The arrays to inspect.
+     * @returns {Array} Returns an array of combined values.
+     * @example
+     *
+     * _.union([1, 2, 3], [5, 2, 1, 4], [2, 1]);
+     * // => [1, 2, 3, 5, 4]
+     */
+    function union() {
+      return baseUniq(baseFlatten(arguments, true, true));
+    }
+
+    /**
+     * Creates a duplicate-value-free version of an array using strict equality
+     * for comparisons, i.e. `===`. If the array is sorted, providing
+     * `true` for `isSorted` will use a faster algorithm. If a callback is provided
+     * each element of `array` is passed through the callback before uniqueness
+     * is computed. The callback is bound to `thisArg` and invoked with three
+     * arguments; (value, index, array).
+     *
+     * If a property name is provided for `callback` the created "_.pluck" style
+     * callback will return the property value of the given element.
+     *
+     * If an object is provided for `callback` the created "_.where" style callback
+     * will return `true` for elements that have the properties of the given object,
+     * else `false`.
+     *
+     * @static
+     * @memberOf _
+     * @alias unique
+     * @category Arrays
+     * @param {Array} array The array to process.
+     * @param {boolean} [isSorted=false] A flag to indicate that `array` is sorted.
+     * @param {Function|Object|string} [callback=identity] The function called
+     *  per iteration. If a property name or object is provided it will be used
+     *  to create a "_.pluck" or "_.where" style callback, respectively.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {Array} Returns a duplicate-value-free array.
+     * @example
+     *
+     * _.uniq([1, 2, 1, 3, 1]);
+     * // => [1, 2, 3]
+     *
+     * _.uniq([1, 1, 2, 2, 3], true);
+     * // => [1, 2, 3]
+     *
+     * _.uniq(['A', 'b', 'C', 'a', 'B', 'c'], function(letter) { return letter.toLowerCase(); });
+     * // => ['A', 'b', 'C']
+     *
+     * _.uniq([1, 2.5, 3, 1.5, 2, 3.5], function(num) { return this.floor(num); }, Math);
+     * // => [1, 2.5, 3]
+     *
+     * // using "_.pluck" callback shorthand
+     * _.uniq([{ 'x': 1 }, { 'x': 2 }, { 'x': 1 }], 'x');
+     * // => [{ 'x': 1 }, { 'x': 2 }]
+     */
+    function uniq(array, isSorted, callback, thisArg) {
+      // juggle arguments
+      if (typeof isSorted != 'boolean' && isSorted != null) {
+        thisArg = callback;
+        callback = (typeof isSorted != 'function' && thisArg && thisArg[isSorted] === array) ? null : isSorted;
+        isSorted = false;
+      }
+      if (callback != null) {
+        callback = lodash.createCallback(callback, thisArg, 3);
+      }
+      return baseUniq(array, isSorted, callback);
+    }
+
+    /**
+     * Creates an array excluding all provided values using strict equality for
+     * comparisons, i.e. `===`.
+     *
+     * @static
+     * @memberOf _
+     * @category Arrays
+     * @param {Array} array The array to filter.
+     * @param {...*} [value] The values to exclude.
+     * @returns {Array} Returns a new array of filtered values.
+     * @example
+     *
+     * _.without([1, 2, 1, 0, 3, 1, 4], 0, 1);
+     * // => [2, 3, 4]
+     */
+    function without(array) {
+      return baseDifference(array, slice(arguments, 1));
+    }
+
+    /**
+     * Creates an array that is the symmetric difference of the provided arrays.
+     * See http://en.wikipedia.org/wiki/Symmetric_difference.
+     *
+     * @static
+     * @memberOf _
+     * @category Arrays
+     * @param {...Array} [array] The arrays to inspect.
+     * @returns {Array} Returns an array of values.
+     * @example
+     *
+     * _.xor([1, 2, 3], [5, 2, 1, 4]);
+     * // => [3, 5, 4]
+     *
+     * _.xor([1, 2, 5], [2, 3, 5], [3, 4, 5]);
+     * // => [1, 4, 5]
+     */
+    function xor() {
+      var index = -1,
+          length = arguments.length;
+
+      while (++index < length) {
+        var array = arguments[index];
+        if (isArray(array) || isArguments(array)) {
+          var result = result
+            ? baseUniq(baseDifference(result, array).concat(baseDifference(array, result)))
+            : array;
+        }
+      }
+      return result || [];
+    }
+
+    /**
+     * Creates an array of grouped elements, the first of which contains the first
+     * elements of the given arrays, the second of which contains the second
+     * elements of the given arrays, and so on.
+     *
+     * @static
+     * @memberOf _
+     * @alias unzip
+     * @category Arrays
+     * @param {...Array} [array] Arrays to process.
+     * @returns {Array} Returns a new array of grouped elements.
+     * @example
+     *
+     * _.zip(['fred', 'barney'], [30, 40], [true, false]);
+     * // => [['fred', 30, true], ['barney', 40, false]]
+     */
+    function zip() {
+      var array = arguments.length > 1 ? arguments : arguments[0],
+          index = -1,
+          length = array ? max(pluck(array, 'length')) : 0,
+          result = Array(length < 0 ? 0 : length);
+
+      while (++index < length) {
+        result[index] = pluck(array, index);
+      }
+      return result;
+    }
+
+    /**
+     * Creates an object composed from arrays of `keys` and `values`. Provide
+     * either a single two dimensional array, i.e. `[[key1, value1], [key2, value2]]`
+     * or two arrays, one of `keys` and one of corresponding `values`.
+     *
+     * @static
+     * @memberOf _
+     * @alias object
+     * @category Arrays
+     * @param {Array} keys The array of keys.
+     * @param {Array} [values=[]] The array of values.
+     * @returns {Object} Returns an object composed of the given keys and
+     *  corresponding values.
+     * @example
+     *
+     * _.zipObject(['fred', 'barney'], [30, 40]);
+     * // => { 'fred': 30, 'barney': 40 }
+     */
+    function zipObject(keys, values) {
+      var index = -1,
+          length = keys ? keys.length : 0,
+          result = {};
+
+      if (!values && length && !isArray(keys[0])) {
+        values = [];
+      }
+      while (++index < length) {
+        var key = keys[index];
+        if (values) {
+          result[key] = values[index];
+        } else if (key) {
+          result[key[0]] = key[1];
+        }
+      }
+      return result;
+    }
+
+    /*--------------------------------------------------------------------------*/
+
+    /**
+     * Creates a function that executes `func`, with  the `this` binding and
+     * arguments of the created function, only after being called `n` times.
+     *
+     * @static
+     * @memberOf _
+     * @category Functions
+     * @param {number} n The number of times the function must be called before
+     *  `func` is executed.
+     * @param {Function} func The function to restrict.
+     * @returns {Function} Returns the new restricted function.
+     * @example
+     *
+     * var saves = ['profile', 'settings'];
+     *
+     * var done = _.after(saves.length, function() {
+     *   console.log('Done saving!');
+     * });
+     *
+     * _.forEach(saves, function(type) {
+     *   asyncSave({ 'type': type, 'complete': done });
+     * });
+     * // => logs 'Done saving!', after all saves have completed
+     */
+    function after(n, func) {
+      if (!isFunction(func)) {
+        throw new TypeError;
+      }
+      return function() {
+        if (--n < 1) {
+          return func.apply(this, arguments);
+        }
+      };
+    }
+
+    /**
+     * Creates a function that, when called, invokes `func` with the `this`
+     * binding of `thisArg` and prepends any additional `bind` arguments to those
+     * provided to the bound function.
+     *
+     * @static
+     * @memberOf _
+     * @category Functions
+     * @param {Function} func The function to bind.
+     * @param {*} [thisArg] The `this` binding of `func`.
+     * @param {...*} [arg] Arguments to be partially applied.
+     * @returns {Function} Returns the new bound function.
+     * @example
+     *
+     * var func = function(greeting) {
+     *   return greeting + ' ' + this.name;
+     * };
+     *
+     * func = _.bind(func, { 'name': 'fred' }, 'hi');
+     * func();
+     * // => 'hi fred'
+     */
+    function bind(func, thisArg) {
+      return arguments.length > 2
+        ? createWrapper(func, 17, slice(arguments, 2), null, thisArg)
+        : createWrapper(func, 1, null, null, thisArg);
+    }
+
+    /**
+     * Binds methods of an object to the object itself, overwriting the existing
+     * method. Method names may be specified as individual arguments or as arrays
+     * of method names. If no method names are provided all the function properties
+     * of `object` will be bound.
+     *
+     * @static
+     * @memberOf _
+     * @category Functions
+     * @param {Object} object The object to bind and assign the bound methods to.
+     * @param {...string} [methodName] The object method names to
+     *  bind, specified as individual method names or arrays of method names.
+     * @returns {Object} Returns `object`.
+     * @example
+     *
+     * var view = {
+     *   'label': 'docs',
+     *   'onClick': function() { console.log('clicked ' + this.label); }
+     * };
+     *
+     * _.bindAll(view);
+     * jQuery('#docs').on('click', view.onClick);
+     * // => logs 'clicked docs', when the button is clicked
+     */
+    function bindAll(object) {
+      var funcs = arguments.length > 1 ? baseFlatten(arguments, true, false, 1) : functions(object),
+          index = -1,
+          length = funcs.length;
+
+      while (++index < length) {
+        var key = funcs[index];
+        object[key] = createWrapper(object[key], 1, null, null, object);
+      }
+      return object;
+    }
+
+    /**
+     * Creates a function that, when called, invokes the method at `object[key]`
+     * and prepends any additional `bindKey` arguments to those provided to the bound
+     * function. This method differs from `_.bind` by allowing bound functions to
+     * reference methods that will be redefined or don't yet exist.
+     * See http://michaux.ca/articles/lazy-function-definition-pattern.
+     *
+     * @static
+     * @memberOf _
+     * @category Functions
+     * @param {Object} object The object the method belongs to.
+     * @param {string} key The key of the method.
+     * @param {...*} [arg] Arguments to be partially applied.
+     * @returns {Function} Returns the new bound function.
+     * @example
+     *
+     * var object = {
+     *   'name': 'fred',
+     *   'greet': function(greeting) {
+     *     return greeting + ' ' + this.name;
+     *   }
+     * };
+     *
+     * var func = _.bindKey(object, 'greet', 'hi');
+     * func();
+     * // => 'hi fred'
+     *
+     * object.greet = function(greeting) {
+     *   return greeting + 'ya ' + this.name + '!';
+     * };
+     *
+     * func();
+     * // => 'hiya fred!'
+     */
+    function bindKey(object, key) {
+      return arguments.length > 2
+        ? createWrapper(key, 19, slice(arguments, 2), null, object)
+        : createWrapper(key, 3, null, null, object);
+    }
+
+    /**
+     * Creates a function that is the composition of the provided functions,
+     * where each function consumes the return value of the function that follows.
+     * For example, composing the functions `f()`, `g()`, and `h()` produces `f(g(h()))`.
+     * Each function is executed with the `this` binding of the composed function.
+     *
+     * @static
+     * @memberOf _
+     * @category Functions
+     * @param {...Function} [func] Functions to compose.
+     * @returns {Function} Returns the new composed function.
+     * @example
+     *
+     * var realNameMap = {
+     *   'pebbles': 'penelope'
+     * };
+     *
+     * var format = function(name) {
+     *   name = realNameMap[name.toLowerCase()] || name;
+     *   return name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
+     * };
+     *
+     * var greet = function(formatted) {
+     *   return 'Hiya ' + formatted + '!';
+     * };
+     *
+     * var welcome = _.compose(greet, format);
+     * welcome('pebbles');
+     * // => 'Hiya Penelope!'
+     */
+    function compose() {
+      var funcs = arguments,
+          length = funcs.length;
+
+      while (length--) {
+        if (!isFunction(funcs[length])) {
+          throw new TypeError;
+        }
+      }
+      return function() {
+        var args = arguments,
+            length = funcs.length;
+
+        while (length--) {
+          args = [funcs[length].apply(this, args)];
+        }
+        return args[0];
+      };
+    }
+
+    /**
+     * Creates a function which accepts one or more arguments of `func` that when
+     * invoked either executes `func` returning its result, if all `func` arguments
+     * have been provided, or returns a function that accepts one or more of the
+     * remaining `func` arguments, and so on. The arity of `func` can be specified
+     * if `func.length` is not sufficient.
+     *
+     * @static
+     * @memberOf _
+     * @category Functions
+     * @param {Function} func The function to curry.
+     * @param {number} [arity=func.length] The arity of `func`.
+     * @returns {Function} Returns the new curried function.
+     * @example
+     *
+     * var curried = _.curry(function(a, b, c) {
+     *   console.log(a + b + c);
+     * });
+     *
+     * curried(1)(2)(3);
+     * // => 6
+     *
+     * curried(1, 2)(3);
+     * // => 6
+     *
+     * curried(1, 2, 3);
+     * // => 6
+     */
+    function curry(func, arity) {
+      arity = typeof arity == 'number' ? arity : (+arity || func.length);
+      return createWrapper(func, 4, null, null, null, arity);
+    }
+
+    /**
+     * Creates a function that will delay the execution of `func` until after
+     * `wait` milliseconds have elapsed since the last time it was invoked.
+     * Provide an options object to indicate that `func` should be invoked on
+     * the leading and/or trailing edge of the `wait` timeout. Subsequent calls
+     * to the debounced function will return the result of the last `func` call.
+     *
+     * Note: If `leading` and `trailing` options are `true` `func` will be called
+     * on the trailing edge of the timeout only if the the debounced function is
+     * invoked more than once during the `wait` timeout.
+     *
+     * @static
+     * @memberOf _
+     * @category Functions
+     * @param {Function} func The function to debounce.
+     * @param {number} wait The number of milliseconds to delay.
+     * @param {Object} [options] The options object.
+     * @param {boolean} [options.leading=false] Specify execution on the leading edge of the timeout.
+     * @param {number} [options.maxWait] The maximum time `func` is allowed to be delayed before it's called.
+     * @param {boolean} [options.trailing=true] Specify execution on the trailing edge of the timeout.
+     * @returns {Function} Returns the new debounced function.
+     * @example
+     *
+     * // avoid costly calculations while the window size is in flux
+     * var lazyLayout = _.debounce(calculateLayout, 150);
+     * jQuery(window).on('resize', lazyLayout);
+     *
+     * // execute `sendMail` when the click event is fired, debouncing subsequent calls
+     * jQuery('#postbox').on('click', _.debounce(sendMail, 300, {
+     *   'leading': true,
+     *   'trailing': false
+     * });
+     *
+     * // ensure `batchLog` is executed once after 1 second of debounced calls
+     * var source = new EventSource('/stream');
+     * source.addEventListener('message', _.debounce(batchLog, 250, {
+     *   'maxWait': 1000
+     * }, false);
+     */
+    function debounce(func, wait, options) {
+      var args,
+          maxTimeoutId,
+          result,
+          stamp,
+          thisArg,
+          timeoutId,
+          trailingCall,
+          lastCalled = 0,
+          maxWait = false,
+          trailing = true;
+
+      if (!isFunction(func)) {
+        throw new TypeError;
+      }
+      wait = nativeMax(0, wait) || 0;
+      if (options === true) {
+        var leading = true;
+        trailing = false;
+      } else if (isObject(options)) {
+        leading = options.leading;
+        maxWait = 'maxWait' in options && (nativeMax(wait, options.maxWait) || 0);
+        trailing = 'trailing' in options ? options.trailing : trailing;
+      }
+      var delayed = function() {
+        var remaining = wait - (now() - stamp);
+        if (remaining <= 0) {
+          if (maxTimeoutId) {
+            clearTimeout(maxTimeoutId);
+          }
+          var isCalled = trailingCall;
+          maxTimeoutId = timeoutId = trailingCall = undefined;
+          if (isCalled) {
+            lastCalled = now();
+            result = func.apply(thisArg, args);
+            if (!timeoutId && !maxTimeoutId) {
+              args = thisArg = null;
+            }
+          }
+        } else {
+          timeoutId = setTimeout(delayed, remaining);
+        }
+      };
+
+      var maxDelayed = function() {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+        maxTimeoutId = timeoutId = trailingCall = undefined;
+        if (trailing || (maxWait !== wait)) {
+          lastCalled = now();
+          result = func.apply(thisArg, args);
+          if (!timeoutId && !maxTimeoutId) {
+            args = thisArg = null;
+          }
+        }
+      };
+
+      return function() {
+        args = arguments;
+        stamp = now();
+        thisArg = this;
+        trailingCall = trailing && (timeoutId || !leading);
+
+        if (maxWait === false) {
+          var leadingCall = leading && !timeoutId;
+        } else {
+          if (!maxTimeoutId && !leading) {
+            lastCalled = stamp;
+          }
+          var remaining = maxWait - (stamp - lastCalled),
+              isCalled = remaining <= 0;
+
+          if (isCalled) {
+            if (maxTimeoutId) {
+              maxTimeoutId = clearTimeout(maxTimeoutId);
+            }
+            lastCalled = stamp;
+            result = func.apply(thisArg, args);
+          }
+          else if (!maxTimeoutId) {
+            maxTimeoutId = setTimeout(maxDelayed, remaining);
+          }
+        }
+        if (isCalled && timeoutId) {
+          timeoutId = clearTimeout(timeoutId);
+        }
+        else if (!timeoutId && wait !== maxWait) {
+          timeoutId = setTimeout(delayed, wait);
+        }
+        if (leadingCall) {
+          isCalled = true;
+          result = func.apply(thisArg, args);
+        }
+        if (isCalled && !timeoutId && !maxTimeoutId) {
+          args = thisArg = null;
+        }
+        return result;
+      };
+    }
+
+    /**
+     * Defers executing the `func` function until the current call stack has cleared.
+     * Additional arguments will be provided to `func` when it is invoked.
+     *
+     * @static
+     * @memberOf _
+     * @category Functions
+     * @param {Function} func The function to defer.
+     * @param {...*} [arg] Arguments to invoke the function with.
+     * @returns {number} Returns the timer id.
+     * @example
+     *
+     * _.defer(function(text) { console.log(text); }, 'deferred');
+     * // logs 'deferred' after one or more milliseconds
+     */
+    function defer(func) {
+      if (!isFunction(func)) {
+        throw new TypeError;
+      }
+      var args = slice(arguments, 1);
+      return setTimeout(function() { func.apply(undefined, args); }, 1);
+    }
+
+    /**
+     * Executes the `func` function after `wait` milliseconds. Additional arguments
+     * will be provided to `func` when it is invoked.
+     *
+     * @static
+     * @memberOf _
+     * @category Functions
+     * @param {Function} func The function to delay.
+     * @param {number} wait The number of milliseconds to delay execution.
+     * @param {...*} [arg] Arguments to invoke the function with.
+     * @returns {number} Returns the timer id.
+     * @example
+     *
+     * _.delay(function(text) { console.log(text); }, 1000, 'later');
+     * // => logs 'later' after one second
+     */
+    function delay(func, wait) {
+      if (!isFunction(func)) {
+        throw new TypeError;
+      }
+      var args = slice(arguments, 2);
+      return setTimeout(function() { func.apply(undefined, args); }, wait);
+    }
+
+    /**
+     * Creates a function that memoizes the result of `func`. If `resolver` is
+     * provided it will be used to determine the cache key for storing the result
+     * based on the arguments provided to the memoized function. By default, the
+     * first argument provided to the memoized function is used as the cache key.
+     * The `func` is executed with the `this` binding of the memoized function.
+     * The result cache is exposed as the `cache` property on the memoized function.
+     *
+     * @static
+     * @memberOf _
+     * @category Functions
+     * @param {Function} func The function to have its output memoized.
+     * @param {Function} [resolver] A function used to resolve the cache key.
+     * @returns {Function} Returns the new memoizing function.
+     * @example
+     *
+     * var fibonacci = _.memoize(function(n) {
+     *   return n < 2 ? n : fibonacci(n - 1) + fibonacci(n - 2);
+     * });
+     *
+     * fibonacci(9)
+     * // => 34
+     *
+     * var data = {
+     *   'fred': { 'name': 'fred', 'age': 40 },
+     *   'pebbles': { 'name': 'pebbles', 'age': 1 }
+     * };
+     *
+     * // modifying the result cache
+     * var get = _.memoize(function(name) { return data[name]; }, _.identity);
+     * get('pebbles');
+     * // => { 'name': 'pebbles', 'age': 1 }
+     *
+     * get.cache.pebbles.name = 'penelope';
+     * get('pebbles');
+     * // => { 'name': 'penelope', 'age': 1 }
+     */
+    function memoize(func, resolver) {
+      if (!isFunction(func)) {
+        throw new TypeError;
+      }
+      var memoized = function() {
+        var cache = memoized.cache,
+            key = resolver ? resolver.apply(this, arguments) : keyPrefix + arguments[0];
+
+        return hasOwnProperty.call(cache, key)
+          ? cache[key]
+          : (cache[key] = func.apply(this, arguments));
+      }
+      memoized.cache = {};
+      return memoized;
+    }
+
+    /**
+     * Creates a function that is restricted to execute `func` once. Repeat calls to
+     * the function will return the value of the first call. The `func` is executed
+     * with the `this` binding of the created function.
+     *
+     * @static
+     * @memberOf _
+     * @category Functions
+     * @param {Function} func The function to restrict.
+     * @returns {Function} Returns the new restricted function.
+     * @example
+     *
+     * var initialize = _.once(createApplication);
+     * initialize();
+     * initialize();
+     * // `initialize` executes `createApplication` once
+     */
+    function once(func) {
+      var ran,
+          result;
+
+      if (!isFunction(func)) {
+        throw new TypeError;
+      }
+      return function() {
+        if (ran) {
+          return result;
+        }
+        ran = true;
+        result = func.apply(this, arguments);
+
+        // clear the `func` variable so the function may be garbage collected
+        func = null;
+        return result;
+      };
+    }
+
+    /**
+     * Creates a function that, when called, invokes `func` with any additional
+     * `partial` arguments prepended to those provided to the new function. This
+     * method is similar to `_.bind` except it does **not** alter the `this` binding.
+     *
+     * @static
+     * @memberOf _
+     * @category Functions
+     * @param {Function} func The function to partially apply arguments to.
+     * @param {...*} [arg] Arguments to be partially applied.
+     * @returns {Function} Returns the new partially applied function.
+     * @example
+     *
+     * var greet = function(greeting, name) { return greeting + ' ' + name; };
+     * var hi = _.partial(greet, 'hi');
+     * hi('fred');
+     * // => 'hi fred'
+     */
+    function partial(func) {
+      return createWrapper(func, 16, slice(arguments, 1));
+    }
+
+    /**
+     * This method is like `_.partial` except that `partial` arguments are
+     * appended to those provided to the new function.
+     *
+     * @static
+     * @memberOf _
+     * @category Functions
+     * @param {Function} func The function to partially apply arguments to.
+     * @param {...*} [arg] Arguments to be partially applied.
+     * @returns {Function} Returns the new partially applied function.
+     * @example
+     *
+     * var defaultsDeep = _.partialRight(_.merge, _.defaults);
+     *
+     * var options = {
+     *   'variable': 'data',
+     *   'imports': { 'jq': $ }
+     * };
+     *
+     * defaultsDeep(options, _.templateSettings);
+     *
+     * options.variable
+     * // => 'data'
+     *
+     * options.imports
+     * // => { '_': _, 'jq': $ }
+     */
+    function partialRight(func) {
+      return createWrapper(func, 32, null, slice(arguments, 1));
+    }
+
+    /**
+     * Creates a function that, when executed, will only call the `func` function
+     * at most once per every `wait` milliseconds. Provide an options object to
+     * indicate that `func` should be invoked on the leading and/or trailing edge
+     * of the `wait` timeout. Subsequent calls to the throttled function will
+     * return the result of the last `func` call.
+     *
+     * Note: If `leading` and `trailing` options are `true` `func` will be called
+     * on the trailing edge of the timeout only if the the throttled function is
+     * invoked more than once during the `wait` timeout.
+     *
+     * @static
+     * @memberOf _
+     * @category Functions
+     * @param {Function} func The function to throttle.
+     * @param {number} wait The number of milliseconds to throttle executions to.
+     * @param {Object} [options] The options object.
+     * @param {boolean} [options.leading=true] Specify execution on the leading edge of the timeout.
+     * @param {boolean} [options.trailing=true] Specify execution on the trailing edge of the timeout.
+     * @returns {Function} Returns the new throttled function.
+     * @example
+     *
+     * // avoid excessively updating the position while scrolling
+     * var throttled = _.throttle(updatePosition, 100);
+     * jQuery(window).on('scroll', throttled);
+     *
+     * // execute `renewToken` when the click event is fired, but not more than once every 5 minutes
+     * jQuery('.interactive').on('click', _.throttle(renewToken, 300000, {
+     *   'trailing': false
+     * }));
+     */
+    function throttle(func, wait, options) {
+      var leading = true,
+          trailing = true;
+
+      if (!isFunction(func)) {
+        throw new TypeError;
+      }
+      if (options === false) {
+        leading = false;
+      } else if (isObject(options)) {
+        leading = 'leading' in options ? options.leading : leading;
+        trailing = 'trailing' in options ? options.trailing : trailing;
+      }
+      debounceOptions.leading = leading;
+      debounceOptions.maxWait = wait;
+      debounceOptions.trailing = trailing;
+
+      return debounce(func, wait, debounceOptions);
+    }
+
+    /**
+     * Creates a function that provides `value` to the wrapper function as its
+     * first argument. Additional arguments provided to the function are appended
+     * to those provided to the wrapper function. The wrapper is executed with
+     * the `this` binding of the created function.
+     *
+     * @static
+     * @memberOf _
+     * @category Functions
+     * @param {*} value The value to wrap.
+     * @param {Function} wrapper The wrapper function.
+     * @returns {Function} Returns the new function.
+     * @example
+     *
+     * var p = _.wrap(_.escape, function(func, text) {
+     *   return '<p>' + func(text) + '</p>';
+     * });
+     *
+     * p('Fred, Wilma, & Pebbles');
+     * // => '<p>Fred, Wilma, &amp; Pebbles</p>'
+     */
+    function wrap(value, wrapper) {
+      return createWrapper(wrapper, 16, [value]);
+    }
+
+    /*--------------------------------------------------------------------------*/
+
+    /**
+     * Creates a function that returns `value`.
+     *
+     * @static
+     * @memberOf _
+     * @category Utilities
+     * @param {*} value The value to return from the new function.
+     * @returns {Function} Returns the new function.
+     * @example
+     *
+     * var object = { 'name': 'fred' };
+     * var getter = _.constant(object);
+     * getter() === object;
+     * // => true
+     */
+    function constant(value) {
+      return function() {
+        return value;
+      };
+    }
+
+    /**
+     * Produces a callback bound to an optional `thisArg`. If `func` is a property
+     * name the created callback will return the property value for a given element.
+     * If `func` is an object the created callback will return `true` for elements
+     * that contain the equivalent object properties, otherwise it will return `false`.
+     *
+     * @static
+     * @memberOf _
+     * @category Utilities
+     * @param {*} [func=identity] The value to convert to a callback.
+     * @param {*} [thisArg] The `this` binding of the created callback.
+     * @param {number} [argCount] The number of arguments the callback accepts.
+     * @returns {Function} Returns a callback function.
+     * @example
+     *
+     * var characters = [
+     *   { 'name': 'barney', 'age': 36 },
+     *   { 'name': 'fred',   'age': 40 }
+     * ];
+     *
+     * // wrap to create custom callback shorthands
+     * _.createCallback = _.wrap(_.createCallback, function(func, callback, thisArg) {
+     *   var match = /^(.+?)__([gl]t)(.+)$/.exec(callback);
+     *   return !match ? func(callback, thisArg) : function(object) {
+     *     return match[2] == 'gt' ? object[match[1]] > match[3] : object[match[1]] < match[3];
+     *   };
+     * });
+     *
+     * _.filter(characters, 'age__gt38');
+     * // => [{ 'name': 'fred', 'age': 40 }]
+     */
+    function createCallback(func, thisArg, argCount) {
+      var type = typeof func;
+      if (func == null || type == 'function') {
+        return baseCreateCallback(func, thisArg, argCount);
+      }
+      // handle "_.pluck" style callback shorthands
+      if (type != 'object') {
+        return property(func);
+      }
+      var props = keys(func),
+          key = props[0],
+          a = func[key];
+
+      // handle "_.where" style callback shorthands
+      if (props.length == 1 && a === a && !isObject(a)) {
+        // fast path the common case of providing an object with a single
+        // property containing a primitive value
+        return function(object) {
+          var b = object[key];
+          return a === b && (a !== 0 || (1 / a == 1 / b));
+        };
+      }
+      return function(object) {
+        var length = props.length,
+            result = false;
+
+        while (length--) {
+          if (!(result = baseIsEqual(object[props[length]], func[props[length]], null, true))) {
+            break;
+          }
+        }
+        return result;
+      };
+    }
+
+    /**
+     * Converts the characters `&`, `<`, `>`, `"`, and `'` in `string` to their
+     * corresponding HTML entities.
+     *
+     * @static
+     * @memberOf _
+     * @category Utilities
+     * @param {string} string The string to escape.
+     * @returns {string} Returns the escaped string.
+     * @example
+     *
+     * _.escape('Fred, Wilma, & Pebbles');
+     * // => 'Fred, Wilma, &amp; Pebbles'
+     */
+    function escape(string) {
+      return string == null ? '' : String(string).replace(reUnescapedHtml, escapeHtmlChar);
+    }
+
+    /**
+     * This method returns the first argument provided to it.
+     *
+     * @static
+     * @memberOf _
+     * @category Utilities
+     * @param {*} value Any value.
+     * @returns {*} Returns `value`.
+     * @example
+     *
+     * var object = { 'name': 'fred' };
+     * _.identity(object) === object;
+     * // => true
+     */
+    function identity(value) {
+      return value;
+    }
+
+    /**
+     * Adds function properties of a source object to the destination object.
+     * If `object` is a function methods will be added to its prototype as well.
+     *
+     * @static
+     * @memberOf _
+     * @category Utilities
+     * @param {Function|Object} [object=lodash] object The destination object.
+     * @param {Object} source The object of functions to add.
+     * @param {Object} [options] The options object.
+     * @param {boolean} [options.chain=true] Specify whether the functions added are chainable.
+     * @example
+     *
+     * function capitalize(string) {
+     *   return string.charAt(0).toUpperCase() + string.slice(1).toLowerCase();
+     * }
+     *
+     * _.mixin({ 'capitalize': capitalize });
+     * _.capitalize('fred');
+     * // => 'Fred'
+     *
+     * _('fred').capitalize().value();
+     * // => 'Fred'
+     *
+     * _.mixin({ 'capitalize': capitalize }, { 'chain': false });
+     * _('fred').capitalize();
+     * // => 'Fred'
+     */
+    function mixin(object, source, options) {
+      var chain = true,
+          methodNames = source && functions(source);
+
+      if (!source || (!options && !methodNames.length)) {
+        if (options == null) {
+          options = source;
+        }
+        ctor = lodashWrapper;
+        source = object;
+        object = lodash;
+        methodNames = functions(source);
+      }
+      if (options === false) {
+        chain = false;
+      } else if (isObject(options) && 'chain' in options) {
+        chain = options.chain;
+      }
+      var ctor = object,
+          isFunc = isFunction(ctor);
+
+      forEach(methodNames, function(methodName) {
+        var func = object[methodName] = source[methodName];
+        if (isFunc) {
+          ctor.prototype[methodName] = function() {
+            var chainAll = this.__chain__,
+                value = this.__wrapped__,
+                args = [value];
+
+            push.apply(args, arguments);
+            var result = func.apply(object, args);
+            if (chain || chainAll) {
+              if (value === result && isObject(result)) {
+                return this;
+              }
+              result = new ctor(result);
+              result.__chain__ = chainAll;
+            }
+            return result;
+          };
+        }
+      });
+    }
+
+    /**
+     * Reverts the '_' variable to its previous value and returns a reference to
+     * the `lodash` function.
+     *
+     * @static
+     * @memberOf _
+     * @category Utilities
+     * @returns {Function} Returns the `lodash` function.
+     * @example
+     *
+     * var lodash = _.noConflict();
+     */
+    function noConflict() {
+      context._ = oldDash;
+      return this;
+    }
+
+    /**
+     * A no-operation function.
+     *
+     * @static
+     * @memberOf _
+     * @category Utilities
+     * @example
+     *
+     * var object = { 'name': 'fred' };
+     * _.noop(object) === undefined;
+     * // => true
+     */
+    function noop() {
+      // no operation performed
+    }
+
+    /**
+     * Gets the number of milliseconds that have elapsed since the Unix epoch
+     * (1 January 1970 00:00:00 UTC).
+     *
+     * @static
+     * @memberOf _
+     * @category Utilities
+     * @example
+     *
+     * var stamp = _.now();
+     * _.defer(function() { console.log(_.now() - stamp); });
+     * // => logs the number of milliseconds it took for the deferred function to be called
+     */
+    var now = isNative(now = Date.now) && now || function() {
+      return new Date().getTime();
+    };
+
+    /**
+     * Converts the given value into an integer of the specified radix.
+     * If `radix` is `undefined` or `0` a `radix` of `10` is used unless the
+     * `value` is a hexadecimal, in which case a `radix` of `16` is used.
+     *
+     * Note: This method avoids differences in native ES3 and ES5 `parseInt`
+     * implementations. See http://es5.github.io/#E.
+     *
+     * @static
+     * @memberOf _
+     * @category Utilities
+     * @param {string} value The value to parse.
+     * @param {number} [radix] The radix used to interpret the value to parse.
+     * @returns {number} Returns the new integer value.
+     * @example
+     *
+     * _.parseInt('08');
+     * // => 8
+     */
+    var parseInt = nativeParseInt(whitespace + '08') == 8 ? nativeParseInt : function(value, radix) {
+      // Firefox < 21 and Opera < 15 follow the ES3 specified implementation of `parseInt`
+      return nativeParseInt(isString(value) ? value.replace(reLeadingSpacesAndZeros, '') : value, radix || 0);
+    };
+
+    /**
+     * Creates a "_.pluck" style function, which returns the `key` value of a
+     * given object.
+     *
+     * @static
+     * @memberOf _
+     * @category Utilities
+     * @param {string} key The name of the property to retrieve.
+     * @returns {Function} Returns the new function.
+     * @example
+     *
+     * var characters = [
+     *   { 'name': 'fred',   'age': 40 },
+     *   { 'name': 'barney', 'age': 36 }
+     * ];
+     *
+     * var getName = _.property('name');
+     *
+     * _.map(characters, getName);
+     * // => ['barney', 'fred']
+     *
+     * _.sortBy(characters, getName);
+     * // => [{ 'name': 'barney', 'age': 36 }, { 'name': 'fred',   'age': 40 }]
+     */
+    function property(key) {
+      return function(object) {
+        return object[key];
+      };
+    }
+
+    /**
+     * Produces a random number between `min` and `max` (inclusive). If only one
+     * argument is provided a number between `0` and the given number will be
+     * returned. If `floating` is truey or either `min` or `max` are floats a
+     * floating-point number will be returned instead of an integer.
+     *
+     * @static
+     * @memberOf _
+     * @category Utilities
+     * @param {number} [min=0] The minimum possible value.
+     * @param {number} [max=1] The maximum possible value.
+     * @param {boolean} [floating=false] Specify returning a floating-point number.
+     * @returns {number} Returns a random number.
+     * @example
+     *
+     * _.random(0, 5);
+     * // => an integer between 0 and 5
+     *
+     * _.random(5);
+     * // => also an integer between 0 and 5
+     *
+     * _.random(5, true);
+     * // => a floating-point number between 0 and 5
+     *
+     * _.random(1.2, 5.2);
+     * // => a floating-point number between 1.2 and 5.2
+     */
+    function random(min, max, floating) {
+      var noMin = min == null,
+          noMax = max == null;
+
+      if (floating == null) {
+        if (typeof min == 'boolean' && noMax) {
+          floating = min;
+          min = 1;
+        }
+        else if (!noMax && typeof max == 'boolean') {
+          floating = max;
+          noMax = true;
+        }
+      }
+      if (noMin && noMax) {
+        max = 1;
+      }
+      min = +min || 0;
+      if (noMax) {
+        max = min;
+        min = 0;
+      } else {
+        max = +max || 0;
+      }
+      if (floating || min % 1 || max % 1) {
+        var rand = nativeRandom();
+        return nativeMin(min + (rand * (max - min + parseFloat('1e-' + ((rand +'').length - 1)))), max);
+      }
+      return baseRandom(min, max);
+    }
+
+    /**
+     * Resolves the value of property `key` on `object`. If `key` is a function
+     * it will be invoked with the `this` binding of `object` and its result returned,
+     * else the property value is returned. If `object` is falsey then `undefined`
+     * is returned.
+     *
+     * @static
+     * @memberOf _
+     * @category Utilities
+     * @param {Object} object The object to inspect.
+     * @param {string} key The name of the property to resolve.
+     * @returns {*} Returns the resolved value.
+     * @example
+     *
+     * var object = {
+     *   'cheese': 'crumpets',
+     *   'stuff': function() {
+     *     return 'nonsense';
+     *   }
+     * };
+     *
+     * _.result(object, 'cheese');
+     * // => 'crumpets'
+     *
+     * _.result(object, 'stuff');
+     * // => 'nonsense'
+     */
+    function result(object, key) {
+      if (object) {
+        var value = object[key];
+        return isFunction(value) ? object[key]() : value;
+      }
+    }
+
+    /**
+     * A micro-templating method that handles arbitrary delimiters, preserves
+     * whitespace, and correctly escapes quotes within interpolated code.
+     *
+     * Note: In the development build, `_.template` utilizes sourceURLs for easier
+     * debugging. See http://www.html5rocks.com/en/tutorials/developertools/sourcemaps/#toc-sourceurl
+     *
+     * For more information on precompiling templates see:
+     * https://lodash.com/custom-builds
+     *
+     * For more information on Chrome extension sandboxes see:
+     * http://developer.chrome.com/stable/extensions/sandboxingEval.html
+     *
+     * @static
+     * @memberOf _
+     * @category Utilities
+     * @param {string} text The template text.
+     * @param {Object} data The data object used to populate the text.
+     * @param {Object} [options] The options object.
+     * @param {RegExp} [options.escape] The "escape" delimiter.
+     * @param {RegExp} [options.evaluate] The "evaluate" delimiter.
+     * @param {Object} [options.imports] An object to import into the template as local variables.
+     * @param {RegExp} [options.interpolate] The "interpolate" delimiter.
+     * @param {string} [sourceURL] The sourceURL of the template's compiled source.
+     * @param {string} [variable] The data object variable name.
+     * @returns {Function|string} Returns a compiled function when no `data` object
+     *  is given, else it returns the interpolated text.
+     * @example
+     *
+     * // using the "interpolate" delimiter to create a compiled template
+     * var compiled = _.template('hello <%= name %>');
+     * compiled({ 'name': 'fred' });
+     * // => 'hello fred'
+     *
+     * // using the "escape" delimiter to escape HTML in data property values
+     * _.template('<b><%- value %></b>', { 'value': '<script>' });
+     * // => '<b>&lt;script&gt;</b>'
+     *
+     * // using the "evaluate" delimiter to generate HTML
+     * var list = '<% _.forEach(people, function(name) { %><li><%- name %></li><% }); %>';
+     * _.template(list, { 'people': ['fred', 'barney'] });
+     * // => '<li>fred</li><li>barney</li>'
+     *
+     * // using the ES6 delimiter as an alternative to the default "interpolate" delimiter
+     * _.template('hello ${ name }', { 'name': 'pebbles' });
+     * // => 'hello pebbles'
+     *
+     * // using the internal `print` function in "evaluate" delimiters
+     * _.template('<% print("hello " + name); %>!', { 'name': 'barney' });
+     * // => 'hello barney!'
+     *
+     * // using a custom template delimiters
+     * _.templateSettings = {
+     *   'interpolate': /{{([\s\S]+?)}}/g
+     * };
+     *
+     * _.template('hello {{ name }}!', { 'name': 'mustache' });
+     * // => 'hello mustache!'
+     *
+     * // using the `imports` option to import jQuery
+     * var list = '<% jq.each(people, function(name) { %><li><%- name %></li><% }); %>';
+     * _.template(list, { 'people': ['fred', 'barney'] }, { 'imports': { 'jq': jQuery } });
+     * // => '<li>fred</li><li>barney</li>'
+     *
+     * // using the `sourceURL` option to specify a custom sourceURL for the template
+     * var compiled = _.template('hello <%= name %>', null, { 'sourceURL': '/basic/greeting.jst' });
+     * compiled(data);
+     * // => find the source of "greeting.jst" under the Sources tab or Resources panel of the web inspector
+     *
+     * // using the `variable` option to ensure a with-statement isn't used in the compiled template
+     * var compiled = _.template('hi <%= data.name %>!', null, { 'variable': 'data' });
+     * compiled.source;
+     * // => function(data) {
+     *   var __t, __p = '', __e = _.escape;
+     *   __p += 'hi ' + ((__t = ( data.name )) == null ? '' : __t) + '!';
+     *   return __p;
+     * }
+     *
+     * // using the `source` property to inline compiled templates for meaningful
+     * // line numbers in error messages and a stack trace
+     * fs.writeFileSync(path.join(cwd, 'jst.js'), '\
+     *   var JST = {\
+     *     "main": ' + _.template(mainText).source + '\
+     *   };\
+     * ');
+     */
+    function template(text, data, options) {
+      // based on John Resig's `tmpl` implementation
+      // http://ejohn.org/blog/javascript-micro-templating/
+      // and Laura Doktorova's doT.js
+      // https://github.com/olado/doT
+      var settings = lodash.templateSettings;
+      text = String(text || '');
+
+      // avoid missing dependencies when `iteratorTemplate` is not defined
+      options = defaults({}, options, settings);
+
+      var imports = defaults({}, options.imports, settings.imports),
+          importsKeys = keys(imports),
+          importsValues = values(imports);
+
+      var isEvaluating,
+          index = 0,
+          interpolate = options.interpolate || reNoMatch,
+          source = "__p += '";
+
+      // compile the regexp to match each delimiter
+      var reDelimiters = RegExp(
+        (options.escape || reNoMatch).source + '|' +
+        interpolate.source + '|' +
+        (interpolate === reInterpolate ? reEsTemplate : reNoMatch).source + '|' +
+        (options.evaluate || reNoMatch).source + '|$'
+      , 'g');
+
+      text.replace(reDelimiters, function(match, escapeValue, interpolateValue, esTemplateValue, evaluateValue, offset) {
+        interpolateValue || (interpolateValue = esTemplateValue);
+
+        // escape characters that cannot be included in string literals
+        source += text.slice(index, offset).replace(reUnescapedString, escapeStringChar);
+
+        // replace delimiters with snippets
+        if (escapeValue) {
+          source += "' +\n__e(" + escapeValue + ") +\n'";
+        }
+        if (evaluateValue) {
+          isEvaluating = true;
+          source += "';\n" + evaluateValue + ";\n__p += '";
+        }
+        if (interpolateValue) {
+          source += "' +\n((__t = (" + interpolateValue + ")) == null ? '' : __t) +\n'";
+        }
+        index = offset + match.length;
+
+        // the JS engine embedded in Adobe products requires returning the `match`
+        // string in order to produce the correct `offset` value
+        return match;
+      });
+
+      source += "';\n";
+
+      // if `variable` is not specified, wrap a with-statement around the generated
+      // code to add the data object to the top of the scope chain
+      var variable = options.variable,
+          hasVariable = variable;
+
+      if (!hasVariable) {
+        variable = 'obj';
+        source = 'with (' + variable + ') {\n' + source + '\n}\n';
+      }
+      // cleanup code by stripping empty strings
+      source = (isEvaluating ? source.replace(reEmptyStringLeading, '') : source)
+        .replace(reEmptyStringMiddle, '$1')
+        .replace(reEmptyStringTrailing, '$1;');
+
+      // frame code as the function body
+      source = 'function(' + variable + ') {\n' +
+        (hasVariable ? '' : variable + ' || (' + variable + ' = {});\n') +
+        "var __t, __p = '', __e = _.escape" +
+        (isEvaluating
+          ? ', __j = Array.prototype.join;\n' +
+            "function print() { __p += __j.call(arguments, '') }\n"
+          : ';\n'
+        ) +
+        source +
+        'return __p\n}';
+
+      // Use a sourceURL for easier debugging.
+      // http://www.html5rocks.com/en/tutorials/developertools/sourcemaps/#toc-sourceurl
+      var sourceURL = '\n/*\n//# sourceURL=' + (options.sourceURL || '/lodash/template/source[' + (templateCounter++) + ']') + '\n*/';
+
+      try {
+        var result = Function(importsKeys, 'return ' + source + sourceURL).apply(undefined, importsValues);
+      } catch(e) {
+        e.source = source;
+        throw e;
+      }
+      if (data) {
+        return result(data);
+      }
+      // provide the compiled function's source by its `toString` method, in
+      // supported environments, or the `source` property as a convenience for
+      // inlining compiled templates during the build process
+      result.source = source;
+      return result;
+    }
+
+    /**
+     * Executes the callback `n` times, returning an array of the results
+     * of each callback execution. The callback is bound to `thisArg` and invoked
+     * with one argument; (index).
+     *
+     * @static
+     * @memberOf _
+     * @category Utilities
+     * @param {number} n The number of times to execute the callback.
+     * @param {Function} callback The function called per iteration.
+     * @param {*} [thisArg] The `this` binding of `callback`.
+     * @returns {Array} Returns an array of the results of each `callback` execution.
+     * @example
+     *
+     * var diceRolls = _.times(3, _.partial(_.random, 1, 6));
+     * // => [3, 6, 4]
+     *
+     * _.times(3, function(n) { mage.castSpell(n); });
+     * // => calls `mage.castSpell(n)` three times, passing `n` of `0`, `1`, and `2` respectively
+     *
+     * _.times(3, function(n) { this.cast(n); }, mage);
+     * // => also calls `mage.castSpell(n)` three times
+     */
+    function times(n, callback, thisArg) {
+      n = (n = +n) > -1 ? n : 0;
+      var index = -1,
+          result = Array(n);
+
+      callback = baseCreateCallback(callback, thisArg, 1);
+      while (++index < n) {
+        result[index] = callback(index);
+      }
+      return result;
+    }
+
+    /**
+     * The inverse of `_.escape` this method converts the HTML entities
+     * `&amp;`, `&lt;`, `&gt;`, `&quot;`, and `&#39;` in `string` to their
+     * corresponding characters.
+     *
+     * @static
+     * @memberOf _
+     * @category Utilities
+     * @param {string} string The string to unescape.
+     * @returns {string} Returns the unescaped string.
+     * @example
+     *
+     * _.unescape('Fred, Barney &amp; Pebbles');
+     * // => 'Fred, Barney & Pebbles'
+     */
+    function unescape(string) {
+      return string == null ? '' : String(string).replace(reEscapedHtml, unescapeHtmlChar);
+    }
+
+    /**
+     * Generates a unique ID. If `prefix` is provided the ID will be appended to it.
+     *
+     * @static
+     * @memberOf _
+     * @category Utilities
+     * @param {string} [prefix] The value to prefix the ID with.
+     * @returns {string} Returns the unique ID.
+     * @example
+     *
+     * _.uniqueId('contact_');
+     * // => 'contact_104'
+     *
+     * _.uniqueId();
+     * // => '105'
+     */
+    function uniqueId(prefix) {
+      var id = ++idCounter;
+      return String(prefix == null ? '' : prefix) + id;
+    }
+
+    /*--------------------------------------------------------------------------*/
+
+    /**
+     * Creates a `lodash` object that wraps the given value with explicit
+     * method chaining enabled.
+     *
+     * @static
+     * @memberOf _
+     * @category Chaining
+     * @param {*} value The value to wrap.
+     * @returns {Object} Returns the wrapper object.
+     * @example
+     *
+     * var characters = [
+     *   { 'name': 'barney',  'age': 36 },
+     *   { 'name': 'fred',    'age': 40 },
+     *   { 'name': 'pebbles', 'age': 1 }
+     * ];
+     *
+     * var youngest = _.chain(characters)
+     *     .sortBy('age')
+     *     .map(function(chr) { return chr.name + ' is ' + chr.age; })
+     *     .first()
+     *     .value();
+     * // => 'pebbles is 1'
+     */
+    function chain(value) {
+      value = new lodashWrapper(value);
+      value.__chain__ = true;
+      return value;
+    }
+
+    /**
+     * Invokes `interceptor` with the `value` as the first argument and then
+     * returns `value`. The purpose of this method is to "tap into" a method
+     * chain in order to perform operations on intermediate results within
+     * the chain.
+     *
+     * @static
+     * @memberOf _
+     * @category Chaining
+     * @param {*} value The value to provide to `interceptor`.
+     * @param {Function} interceptor The function to invoke.
+     * @returns {*} Returns `value`.
+     * @example
+     *
+     * _([1, 2, 3, 4])
+     *  .tap(function(array) { array.pop(); })
+     *  .reverse()
+     *  .value();
+     * // => [3, 2, 1]
+     */
+    function tap(value, interceptor) {
+      interceptor(value);
+      return value;
+    }
+
+    /**
+     * Enables explicit method chaining on the wrapper object.
+     *
+     * @name chain
+     * @memberOf _
+     * @category Chaining
+     * @returns {*} Returns the wrapper object.
+     * @example
+     *
+     * var characters = [
+     *   { 'name': 'barney', 'age': 36 },
+     *   { 'name': 'fred',   'age': 40 }
+     * ];
+     *
+     * // without explicit chaining
+     * _(characters).first();
+     * // => { 'name': 'barney', 'age': 36 }
+     *
+     * // with explicit chaining
+     * _(characters).chain()
+     *   .first()
+     *   .pick('age')
+     *   .value();
+     * // => { 'age': 36 }
+     */
+    function wrapperChain() {
+      this.__chain__ = true;
+      return this;
+    }
+
+    /**
+     * Produces the `toString` result of the wrapped value.
+     *
+     * @name toString
+     * @memberOf _
+     * @category Chaining
+     * @returns {string} Returns the string result.
+     * @example
+     *
+     * _([1, 2, 3]).toString();
+     * // => '1,2,3'
+     */
+    function wrapperToString() {
+      return String(this.__wrapped__);
+    }
+
+    /**
+     * Extracts the wrapped value.
+     *
+     * @name valueOf
+     * @memberOf _
+     * @alias value
+     * @category Chaining
+     * @returns {*} Returns the wrapped value.
+     * @example
+     *
+     * _([1, 2, 3]).valueOf();
+     * // => [1, 2, 3]
+     */
+    function wrapperValueOf() {
+      return this.__wrapped__;
+    }
+
+    /*--------------------------------------------------------------------------*/
+
+    // add functions that return wrapped values when chaining
+    lodash.after = after;
+    lodash.assign = assign;
+    lodash.at = at;
+    lodash.bind = bind;
+    lodash.bindAll = bindAll;
+    lodash.bindKey = bindKey;
+    lodash.chain = chain;
+    lodash.compact = compact;
+    lodash.compose = compose;
+    lodash.constant = constant;
+    lodash.countBy = countBy;
+    lodash.create = create;
+    lodash.createCallback = createCallback;
+    lodash.curry = curry;
+    lodash.debounce = debounce;
+    lodash.defaults = defaults;
+    lodash.defer = defer;
+    lodash.delay = delay;
+    lodash.difference = difference;
+    lodash.filter = filter;
+    lodash.flatten = flatten;
+    lodash.forEach = forEach;
+    lodash.forEachRight = forEachRight;
+    lodash.forIn = forIn;
+    lodash.forInRight = forInRight;
+    lodash.forOwn = forOwn;
+    lodash.forOwnRight = forOwnRight;
+    lodash.functions = functions;
+    lodash.groupBy = groupBy;
+    lodash.indexBy = indexBy;
+    lodash.initial = initial;
+    lodash.intersection = intersection;
+    lodash.invert = invert;
+    lodash.invoke = invoke;
+    lodash.keys = keys;
+    lodash.map = map;
+    lodash.mapValues = mapValues;
+    lodash.max = max;
+    lodash.memoize = memoize;
+    lodash.merge = merge;
+    lodash.min = min;
+    lodash.omit = omit;
+    lodash.once = once;
+    lodash.pairs = pairs;
+    lodash.partial = partial;
+    lodash.partialRight = partialRight;
+    lodash.pick = pick;
+    lodash.pluck = pluck;
+    lodash.property = property;
+    lodash.pull = pull;
+    lodash.range = range;
+    lodash.reject = reject;
+    lodash.remove = remove;
+    lodash.rest = rest;
+    lodash.shuffle = shuffle;
+    lodash.sortBy = sortBy;
+    lodash.tap = tap;
+    lodash.throttle = throttle;
+    lodash.times = times;
+    lodash.toArray = toArray;
+    lodash.transform = transform;
+    lodash.union = union;
+    lodash.uniq = uniq;
+    lodash.values = values;
+    lodash.where = where;
+    lodash.without = without;
+    lodash.wrap = wrap;
+    lodash.xor = xor;
+    lodash.zip = zip;
+    lodash.zipObject = zipObject;
+
+    // add aliases
+    lodash.collect = map;
+    lodash.drop = rest;
+    lodash.each = forEach;
+    lodash.eachRight = forEachRight;
+    lodash.extend = assign;
+    lodash.methods = functions;
+    lodash.object = zipObject;
+    lodash.select = filter;
+    lodash.tail = rest;
+    lodash.unique = uniq;
+    lodash.unzip = zip;
+
+    // add functions to `lodash.prototype`
+    mixin(lodash);
+
+    /*--------------------------------------------------------------------------*/
+
+    // add functions that return unwrapped values when chaining
+    lodash.clone = clone;
+    lodash.cloneDeep = cloneDeep;
+    lodash.contains = contains;
+    lodash.escape = escape;
+    lodash.every = every;
+    lodash.find = find;
+    lodash.findIndex = findIndex;
+    lodash.findKey = findKey;
+    lodash.findLast = findLast;
+    lodash.findLastIndex = findLastIndex;
+    lodash.findLastKey = findLastKey;
+    lodash.has = has;
+    lodash.identity = identity;
+    lodash.indexOf = indexOf;
+    lodash.isArguments = isArguments;
+    lodash.isArray = isArray;
+    lodash.isBoolean = isBoolean;
+    lodash.isDate = isDate;
+    lodash.isElement = isElement;
+    lodash.isEmpty = isEmpty;
+    lodash.isEqual = isEqual;
+    lodash.isFinite = isFinite;
+    lodash.isFunction = isFunction;
+    lodash.isNaN = isNaN;
+    lodash.isNull = isNull;
+    lodash.isNumber = isNumber;
+    lodash.isObject = isObject;
+    lodash.isPlainObject = isPlainObject;
+    lodash.isRegExp = isRegExp;
+    lodash.isString = isString;
+    lodash.isUndefined = isUndefined;
+    lodash.lastIndexOf = lastIndexOf;
+    lodash.mixin = mixin;
+    lodash.noConflict = noConflict;
+    lodash.noop = noop;
+    lodash.now = now;
+    lodash.parseInt = parseInt;
+    lodash.random = random;
+    lodash.reduce = reduce;
+    lodash.reduceRight = reduceRight;
+    lodash.result = result;
+    lodash.runInContext = runInContext;
+    lodash.size = size;
+    lodash.some = some;
+    lodash.sortedIndex = sortedIndex;
+    lodash.template = template;
+    lodash.unescape = unescape;
+    lodash.uniqueId = uniqueId;
+
+    // add aliases
+    lodash.all = every;
+    lodash.any = some;
+    lodash.detect = find;
+    lodash.findWhere = find;
+    lodash.foldl = reduce;
+    lodash.foldr = reduceRight;
+    lodash.include = contains;
+    lodash.inject = reduce;
+
+    mixin(function() {
+      var source = {}
+      forOwn(lodash, function(func, methodName) {
+        if (!lodash.prototype[methodName]) {
+          source[methodName] = func;
+        }
+      });
+      return source;
+    }(), false);
+
+    /*--------------------------------------------------------------------------*/
+
+    // add functions capable of returning wrapped and unwrapped values when chaining
+    lodash.first = first;
+    lodash.last = last;
+    lodash.sample = sample;
+
+    // add aliases
+    lodash.take = first;
+    lodash.head = first;
+
+    forOwn(lodash, function(func, methodName) {
+      var callbackable = methodName !== 'sample';
+      if (!lodash.prototype[methodName]) {
+        lodash.prototype[methodName]= function(n, guard) {
+          var chainAll = this.__chain__,
+              result = func(this.__wrapped__, n, guard);
+
+          return !chainAll && (n == null || (guard && !(callbackable && typeof n == 'function')))
+            ? result
+            : new lodashWrapper(result, chainAll);
+        };
+      }
+    });
+
+    /*--------------------------------------------------------------------------*/
+
+    /**
+     * The semantic version number.
+     *
+     * @static
+     * @memberOf _
+     * @type string
+     */
+    lodash.VERSION = '2.4.2';
+
+    // add "Chaining" functions to the wrapper
+    lodash.prototype.chain = wrapperChain;
+    lodash.prototype.toString = wrapperToString;
+    lodash.prototype.value = wrapperValueOf;
+    lodash.prototype.valueOf = wrapperValueOf;
+
+    // add `Array` functions that return unwrapped values
+    forEach(['join', 'pop', 'shift'], function(methodName) {
+      var func = arrayRef[methodName];
+      lodash.prototype[methodName] = function() {
+        var chainAll = this.__chain__,
+            result = func.apply(this.__wrapped__, arguments);
+
+        return chainAll
+          ? new lodashWrapper(result, chainAll)
+          : result;
+      };
+    });
+
+    // add `Array` functions that return the existing wrapped value
+    forEach(['push', 'reverse', 'sort', 'unshift'], function(methodName) {
+      var func = arrayRef[methodName];
+      lodash.prototype[methodName] = function() {
+        func.apply(this.__wrapped__, arguments);
+        return this;
+      };
+    });
+
+    // add `Array` functions that return new wrapped values
+    forEach(['concat', 'slice', 'splice'], function(methodName) {
+      var func = arrayRef[methodName];
+      lodash.prototype[methodName] = function() {
+        return new lodashWrapper(func.apply(this.__wrapped__, arguments), this.__chain__);
+      };
+    });
+
+    return lodash;
+  }
+
+  /*--------------------------------------------------------------------------*/
+
+  // expose Lo-Dash
+  var _ = runInContext();
+
+  // some AMD build optimizers like r.js check for condition patterns like the following:
+  if (typeof define == 'function' && typeof define.amd == 'object' && define.amd) {
+    // Expose Lo-Dash to the global object even when an AMD loader is present in
+    // case Lo-Dash is loaded with a RequireJS shim config.
+    // See http://requirejs.org/docs/api.html#config-shim
+    root._ = _;
+
+    // define as an anonymous module so, through path mapping, it can be
+    // referenced as the "underscore" module
+    define(function() {
+      return _;
+    });
+  }
+  // check for `exports` after `define` in case a build optimizer adds an `exports` object
+  else if (freeExports && freeModule) {
+    // in Node.js or RingoJS
+    if (moduleExports) {
+      (freeModule.exports = _)._ = _;
+    }
+    // in Narwhal or Rhino -require
+    else {
+      freeExports._ = _;
+    }
+  }
+  else {
+    // in a browser or Rhino
+    root._ = _;
+  }
+}.call(this));
+
+}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
+
+},{}],18:[function(require,module,exports){
+'use strict';
+
+/**
+ * @ngInject
+ */
+var LoginController = function ($scope, $http, $location, npolarApiConfig, NpolarApiUser, NpolarApiSecurity) {
+
+  // Login and store user (jwt, name, username, email, uri, uuid, exp, systems)
+  $scope.login = function() {
+    if (!$scope.user.username || !$scope.user.password) {
+      return false;
+    }
+    // TODO force https
+    var url = npolarApiConfig.base+"/user/authenticate/";
+
+    var req = { method: "GET", url: url,
+      headers: { "Authorization": "Basic " + NpolarApiSecurity.basicToken($scope.user) }
+    };
+    $http(req).success(function(data) {
+
+      var token = NpolarApiSecurity.decodeJwt(data.token);
+
+      $scope.user = { name: token.name || $scope.user.username, username: $scope.user.username, jwt: data.token };
+      
+      NpolarApiUser.setUser($scope.user);
+
+      if (/^http/.test(token.uri)) {
+        // Merge user with data from the Person API
+        $http.get(token.uri).success(function(person) {
+          $scope.user.name = person.first_name+" "+person.last_name;
+          $scope.user.email = person.email;
+          $scope.user.uri = token.uri;
+          $scope.user.uuid = person.uuid;
+          $scope.user.exp = token.exp;
+          $scope.user.systems = token.systems;
+  
+          NpolarApiUser.setUser($scope.user);
+  
+        });
+      }
+
+
+    }).error(function(error){
+      console.error(error);
+      $scope.logout();
+    });
+
+  };
+
+  $scope.logout = function() {
+    NpolarApiSecurity.removeUser();
+    $scope.user = {};
+    $location.path('/');
+  };
+};
+LoginController.$inject = ["$scope", "$http", "$location", "npolarApiConfig", "NpolarApiUser", "NpolarApiSecurity"];
+
+module.exports = LoginController;
+
+},{}],19:[function(require,module,exports){
+'use strict';
+
+/**
+ * @ngInject
+ */
+var loginLogout = function (NpolarApiSecurity) {
+  return {
+   scope: {},
+   controller: 'NpolarLoginController',
+   templateUrl: 'angular-npolar/ui/auth/_user.html',
+   link: function(scope) {
+      scope.user = NpolarApiSecurity.getUser();
+   }
+  };
+};
+loginLogout.$inject = ["NpolarApiSecurity"];
+
+module.exports = loginLogout;
+
+},{}],20:[function(require,module,exports){
+'use strict';
+var angular = require('angular');
+
+var npolarUi = angular.module('npolarUi', []);
+npolarUi.value('version', '0.1');
+
+npolarUi.controller('NpolarLoginController', require('./auth/LoginController'));
+
+npolarUi.directive('npolarLoginLogout', require('./auth/loginLogout'));
+//npolarUi.directive('npolarUiNpdcNav', require('./navigation/nav'));
+//npolarUi.directive('npolarUiAppVersion', require('./breadcrumbs/breadcrumbs'));
+
+module.exports = npolarUi;
+
+},{"./auth/LoginController":18,"./auth/loginLogout":19,"angular":24}],21:[function(require,module,exports){
+/**
+ * @license AngularJS v1.4.3
+ * (c) 2010-2015 Google, Inc. http://angularjs.org
+ * License: MIT
+ */
+(function(window, angular, undefined) {'use strict';
+
+/**
+ * @ngdoc module
+ * @name ngRoute
+ * @description
+ *
+ * # ngRoute
+ *
+ * The `ngRoute` module provides routing and deeplinking services and directives for angular apps.
+ *
+ * ## Example
+ * See {@link ngRoute.$route#example $route} for an example of configuring and using `ngRoute`.
+ *
+ *
+ * <div doc-module-components="ngRoute"></div>
+ */
+ /* global -ngRouteModule */
+var ngRouteModule = angular.module('ngRoute', ['ng']).
+                        provider('$route', $RouteProvider),
+    $routeMinErr = angular.$$minErr('ngRoute');
+
+/**
+ * @ngdoc provider
+ * @name $routeProvider
+ *
+ * @description
+ *
+ * Used for configuring routes.
+ *
+ * ## Example
+ * See {@link ngRoute.$route#example $route} for an example of configuring and using `ngRoute`.
+ *
+ * ## Dependencies
+ * Requires the {@link ngRoute `ngRoute`} module to be installed.
+ */
+function $RouteProvider() {
+  function inherit(parent, extra) {
+    return angular.extend(Object.create(parent), extra);
+  }
+
+  var routes = {};
+
+  /**
+   * @ngdoc method
+   * @name $routeProvider#when
+   *
+   * @param {string} path Route path (matched against `$location.path`). If `$location.path`
+   *    contains redundant trailing slash or is missing one, the route will still match and the
+   *    `$location.path` will be updated to add or drop the trailing slash to exactly match the
+   *    route definition.
+   *
+   *    * `path` can contain named groups starting with a colon: e.g. `:name`. All characters up
+   *        to the next slash are matched and stored in `$routeParams` under the given `name`
+   *        when the route matches.
+   *    * `path` can contain named groups starting with a colon and ending with a star:
+   *        e.g.`:name*`. All characters are eagerly stored in `$routeParams` under the given `name`
+   *        when the route matches.
+   *    * `path` can contain optional named groups with a question mark: e.g.`:name?`.
+   *
+   *    For example, routes like `/color/:color/largecode/:largecode*\/edit` will match
+   *    `/color/brown/largecode/code/with/slashes/edit` and extract:
+   *
+   *    * `color: brown`
+   *    * `largecode: code/with/slashes`.
+   *
+   *
+   * @param {Object} route Mapping information to be assigned to `$route.current` on route
+   *    match.
+   *
+   *    Object properties:
+   *
+   *    - `controller` – `{(string|function()=}` – Controller fn that should be associated with
+   *      newly created scope or the name of a {@link angular.Module#controller registered
+   *      controller} if passed as a string.
+   *    - `controllerAs` – `{string=}` – An identifier name for a reference to the controller.
+   *      If present, the controller will be published to scope under the `controllerAs` name.
+   *    - `template` – `{string=|function()=}` – html template as a string or a function that
+   *      returns an html template as a string which should be used by {@link
+   *      ngRoute.directive:ngView ngView} or {@link ng.directive:ngInclude ngInclude} directives.
+   *      This property takes precedence over `templateUrl`.
+   *
+   *      If `template` is a function, it will be called with the following parameters:
+   *
+   *      - `{Array.<Object>}` - route parameters extracted from the current
+   *        `$location.path()` by applying the current route
+   *
+   *    - `templateUrl` – `{string=|function()=}` – path or function that returns a path to an html
+   *      template that should be used by {@link ngRoute.directive:ngView ngView}.
+   *
+   *      If `templateUrl` is a function, it will be called with the following parameters:
+   *
+   *      - `{Array.<Object>}` - route parameters extracted from the current
+   *        `$location.path()` by applying the current route
+   *
+   *    - `resolve` - `{Object.<string, function>=}` - An optional map of dependencies which should
+   *      be injected into the controller. If any of these dependencies are promises, the router
+   *      will wait for them all to be resolved or one to be rejected before the controller is
+   *      instantiated.
+   *      If all the promises are resolved successfully, the values of the resolved promises are
+   *      injected and {@link ngRoute.$route#$routeChangeSuccess $routeChangeSuccess} event is
+   *      fired. If any of the promises are rejected the
+   *      {@link ngRoute.$route#$routeChangeError $routeChangeError} event is fired. The map object
+   *      is:
+   *
+   *      - `key` – `{string}`: a name of a dependency to be injected into the controller.
+   *      - `factory` - `{string|function}`: If `string` then it is an alias for a service.
+   *        Otherwise if function, then it is {@link auto.$injector#invoke injected}
+   *        and the return value is treated as the dependency. If the result is a promise, it is
+   *        resolved before its value is injected into the controller. Be aware that
+   *        `ngRoute.$routeParams` will still refer to the previous route within these resolve
+   *        functions.  Use `$route.current.params` to access the new route parameters, instead.
+   *
+   *    - `redirectTo` – {(string|function())=} – value to update
+   *      {@link ng.$location $location} path with and trigger route redirection.
+   *
+   *      If `redirectTo` is a function, it will be called with the following parameters:
+   *
+   *      - `{Object.<string>}` - route parameters extracted from the current
+   *        `$location.path()` by applying the current route templateUrl.
+   *      - `{string}` - current `$location.path()`
+   *      - `{Object}` - current `$location.search()`
+   *
+   *      The custom `redirectTo` function is expected to return a string which will be used
+   *      to update `$location.path()` and `$location.search()`.
+   *
+   *    - `[reloadOnSearch=true]` - {boolean=} - reload route when only `$location.search()`
+   *      or `$location.hash()` changes.
+   *
+   *      If the option is set to `false` and url in the browser changes, then
+   *      `$routeUpdate` event is broadcasted on the root scope.
+   *
+   *    - `[caseInsensitiveMatch=false]` - {boolean=} - match routes without being case sensitive
+   *
+   *      If the option is set to `true`, then the particular route can be matched without being
+   *      case sensitive
+   *
+   * @returns {Object} self
+   *
+   * @description
+   * Adds a new route definition to the `$route` service.
+   */
+  this.when = function(path, route) {
+    //copy original route object to preserve params inherited from proto chain
+    var routeCopy = angular.copy(route);
+    if (angular.isUndefined(routeCopy.reloadOnSearch)) {
+      routeCopy.reloadOnSearch = true;
+    }
+    if (angular.isUndefined(routeCopy.caseInsensitiveMatch)) {
+      routeCopy.caseInsensitiveMatch = this.caseInsensitiveMatch;
+    }
+    routes[path] = angular.extend(
+      routeCopy,
+      path && pathRegExp(path, routeCopy)
+    );
+
+    // create redirection for trailing slashes
+    if (path) {
+      var redirectPath = (path[path.length - 1] == '/')
+            ? path.substr(0, path.length - 1)
+            : path + '/';
+
+      routes[redirectPath] = angular.extend(
+        {redirectTo: path},
+        pathRegExp(redirectPath, routeCopy)
+      );
+    }
+
+    return this;
+  };
+
+  /**
+   * @ngdoc property
+   * @name $routeProvider#caseInsensitiveMatch
+   * @description
+   *
+   * A boolean property indicating if routes defined
+   * using this provider should be matched using a case insensitive
+   * algorithm. Defaults to `false`.
+   */
+  this.caseInsensitiveMatch = false;
+
+   /**
+    * @param path {string} path
+    * @param opts {Object} options
+    * @return {?Object}
+    *
+    * @description
+    * Normalizes the given path, returning a regular expression
+    * and the original path.
+    *
+    * Inspired by pathRexp in visionmedia/express/lib/utils.js.
+    */
+  function pathRegExp(path, opts) {
+    var insensitive = opts.caseInsensitiveMatch,
+        ret = {
+          originalPath: path,
+          regexp: path
+        },
+        keys = ret.keys = [];
+
+    path = path
+      .replace(/([().])/g, '\\$1')
+      .replace(/(\/)?:(\w+)([\?\*])?/g, function(_, slash, key, option) {
+        var optional = option === '?' ? option : null;
+        var star = option === '*' ? option : null;
+        keys.push({ name: key, optional: !!optional });
+        slash = slash || '';
+        return ''
+          + (optional ? '' : slash)
+          + '(?:'
+          + (optional ? slash : '')
+          + (star && '(.+?)' || '([^/]+)')
+          + (optional || '')
+          + ')'
+          + (optional || '');
+      })
+      .replace(/([\/$\*])/g, '\\$1');
+
+    ret.regexp = new RegExp('^' + path + '$', insensitive ? 'i' : '');
+    return ret;
+  }
+
+  /**
+   * @ngdoc method
+   * @name $routeProvider#otherwise
+   *
+   * @description
+   * Sets route definition that will be used on route change when no other route definition
+   * is matched.
+   *
+   * @param {Object|string} params Mapping information to be assigned to `$route.current`.
+   * If called with a string, the value maps to `redirectTo`.
+   * @returns {Object} self
+   */
+  this.otherwise = function(params) {
+    if (typeof params === 'string') {
+      params = {redirectTo: params};
+    }
+    this.when(null, params);
+    return this;
+  };
+
+
+  this.$get = ['$rootScope',
+               '$location',
+               '$routeParams',
+               '$q',
+               '$injector',
+               '$templateRequest',
+               '$sce',
+      function($rootScope, $location, $routeParams, $q, $injector, $templateRequest, $sce) {
+
+    /**
+     * @ngdoc service
+     * @name $route
+     * @requires $location
+     * @requires $routeParams
+     *
+     * @property {Object} current Reference to the current route definition.
+     * The route definition contains:
+     *
+     *   - `controller`: The controller constructor as define in route definition.
+     *   - `locals`: A map of locals which is used by {@link ng.$controller $controller} service for
+     *     controller instantiation. The `locals` contain
+     *     the resolved values of the `resolve` map. Additionally the `locals` also contain:
+     *
+     *     - `$scope` - The current route scope.
+     *     - `$template` - The current route template HTML.
+     *
+     * @property {Object} routes Object with all route configuration Objects as its properties.
+     *
+     * @description
+     * `$route` is used for deep-linking URLs to controllers and views (HTML partials).
+     * It watches `$location.url()` and tries to map the path to an existing route definition.
+     *
+     * Requires the {@link ngRoute `ngRoute`} module to be installed.
+     *
+     * You can define routes through {@link ngRoute.$routeProvider $routeProvider}'s API.
+     *
+     * The `$route` service is typically used in conjunction with the
+     * {@link ngRoute.directive:ngView `ngView`} directive and the
+     * {@link ngRoute.$routeParams `$routeParams`} service.
+     *
+     * @example
+     * This example shows how changing the URL hash causes the `$route` to match a route against the
+     * URL, and the `ngView` pulls in the partial.
+     *
+     * <example name="$route-service" module="ngRouteExample"
+     *          deps="angular-route.js" fixBase="true">
+     *   <file name="index.html">
+     *     <div ng-controller="MainController">
+     *       Choose:
+     *       <a href="Book/Moby">Moby</a> |
+     *       <a href="Book/Moby/ch/1">Moby: Ch1</a> |
+     *       <a href="Book/Gatsby">Gatsby</a> |
+     *       <a href="Book/Gatsby/ch/4?key=value">Gatsby: Ch4</a> |
+     *       <a href="Book/Scarlet">Scarlet Letter</a><br/>
+     *
+     *       <div ng-view></div>
+     *
+     *       <hr />
+     *
+     *       <pre>$location.path() = {{$location.path()}}</pre>
+     *       <pre>$route.current.templateUrl = {{$route.current.templateUrl}}</pre>
+     *       <pre>$route.current.params = {{$route.current.params}}</pre>
+     *       <pre>$route.current.scope.name = {{$route.current.scope.name}}</pre>
+     *       <pre>$routeParams = {{$routeParams}}</pre>
+     *     </div>
+     *   </file>
+     *
+     *   <file name="book.html">
+     *     controller: {{name}}<br />
+     *     Book Id: {{params.bookId}}<br />
+     *   </file>
+     *
+     *   <file name="chapter.html">
+     *     controller: {{name}}<br />
+     *     Book Id: {{params.bookId}}<br />
+     *     Chapter Id: {{params.chapterId}}
+     *   </file>
+     *
+     *   <file name="script.js">
+     *     angular.module('ngRouteExample', ['ngRoute'])
+     *
+     *      .controller('MainController', function($scope, $route, $routeParams, $location) {
+     *          $scope.$route = $route;
+     *          $scope.$location = $location;
+     *          $scope.$routeParams = $routeParams;
+     *      })
+     *
+     *      .controller('BookController', function($scope, $routeParams) {
+     *          $scope.name = "BookController";
+     *          $scope.params = $routeParams;
+     *      })
+     *
+     *      .controller('ChapterController', function($scope, $routeParams) {
+     *          $scope.name = "ChapterController";
+     *          $scope.params = $routeParams;
+     *      })
+     *
+     *     .config(function($routeProvider, $locationProvider) {
+     *       $routeProvider
+     *        .when('/Book/:bookId', {
+     *         templateUrl: 'book.html',
+     *         controller: 'BookController',
+     *         resolve: {
+     *           // I will cause a 1 second delay
+     *           delay: function($q, $timeout) {
+     *             var delay = $q.defer();
+     *             $timeout(delay.resolve, 1000);
+     *             return delay.promise;
+     *           }
+     *         }
+     *       })
+     *       .when('/Book/:bookId/ch/:chapterId', {
+     *         templateUrl: 'chapter.html',
+     *         controller: 'ChapterController'
+     *       });
+     *
+     *       // configure html5 to get links working on jsfiddle
+     *       $locationProvider.html5Mode(true);
+     *     });
+     *
+     *   </file>
+     *
+     *   <file name="protractor.js" type="protractor">
+     *     it('should load and compile correct template', function() {
+     *       element(by.linkText('Moby: Ch1')).click();
+     *       var content = element(by.css('[ng-view]')).getText();
+     *       expect(content).toMatch(/controller\: ChapterController/);
+     *       expect(content).toMatch(/Book Id\: Moby/);
+     *       expect(content).toMatch(/Chapter Id\: 1/);
+     *
+     *       element(by.partialLinkText('Scarlet')).click();
+     *
+     *       content = element(by.css('[ng-view]')).getText();
+     *       expect(content).toMatch(/controller\: BookController/);
+     *       expect(content).toMatch(/Book Id\: Scarlet/);
+     *     });
+     *   </file>
+     * </example>
+     */
+
+    /**
+     * @ngdoc event
+     * @name $route#$routeChangeStart
+     * @eventType broadcast on root scope
+     * @description
+     * Broadcasted before a route change. At this  point the route services starts
+     * resolving all of the dependencies needed for the route change to occur.
+     * Typically this involves fetching the view template as well as any dependencies
+     * defined in `resolve` route property. Once  all of the dependencies are resolved
+     * `$routeChangeSuccess` is fired.
+     *
+     * The route change (and the `$location` change that triggered it) can be prevented
+     * by calling `preventDefault` method of the event. See {@link ng.$rootScope.Scope#$on}
+     * for more details about event object.
+     *
+     * @param {Object} angularEvent Synthetic event object.
+     * @param {Route} next Future route information.
+     * @param {Route} current Current route information.
+     */
+
+    /**
+     * @ngdoc event
+     * @name $route#$routeChangeSuccess
+     * @eventType broadcast on root scope
+     * @description
+     * Broadcasted after a route change has happened successfully.
+     * The `resolve` dependencies are now available in the `current.locals` property.
+     *
+     * {@link ngRoute.directive:ngView ngView} listens for the directive
+     * to instantiate the controller and render the view.
+     *
+     * @param {Object} angularEvent Synthetic event object.
+     * @param {Route} current Current route information.
+     * @param {Route|Undefined} previous Previous route information, or undefined if current is
+     * first route entered.
+     */
+
+    /**
+     * @ngdoc event
+     * @name $route#$routeChangeError
+     * @eventType broadcast on root scope
+     * @description
+     * Broadcasted if any of the resolve promises are rejected.
+     *
+     * @param {Object} angularEvent Synthetic event object
+     * @param {Route} current Current route information.
+     * @param {Route} previous Previous route information.
+     * @param {Route} rejection Rejection of the promise. Usually the error of the failed promise.
+     */
+
+    /**
+     * @ngdoc event
+     * @name $route#$routeUpdate
+     * @eventType broadcast on root scope
+     * @description
+     * The `reloadOnSearch` property has been set to false, and we are reusing the same
+     * instance of the Controller.
+     *
+     * @param {Object} angularEvent Synthetic event object
+     * @param {Route} current Current/previous route information.
+     */
+
+    var forceReload = false,
+        preparedRoute,
+        preparedRouteIsUpdateOnly,
+        $route = {
+          routes: routes,
+
+          /**
+           * @ngdoc method
+           * @name $route#reload
+           *
+           * @description
+           * Causes `$route` service to reload the current route even if
+           * {@link ng.$location $location} hasn't changed.
+           *
+           * As a result of that, {@link ngRoute.directive:ngView ngView}
+           * creates new scope and reinstantiates the controller.
+           */
+          reload: function() {
+            forceReload = true;
+            $rootScope.$evalAsync(function() {
+              // Don't support cancellation of a reload for now...
+              prepareRoute();
+              commitRoute();
+            });
+          },
+
+          /**
+           * @ngdoc method
+           * @name $route#updateParams
+           *
+           * @description
+           * Causes `$route` service to update the current URL, replacing
+           * current route parameters with those specified in `newParams`.
+           * Provided property names that match the route's path segment
+           * definitions will be interpolated into the location's path, while
+           * remaining properties will be treated as query params.
+           *
+           * @param {!Object<string, string>} newParams mapping of URL parameter names to values
+           */
+          updateParams: function(newParams) {
+            if (this.current && this.current.$$route) {
+              newParams = angular.extend({}, this.current.params, newParams);
+              $location.path(interpolate(this.current.$$route.originalPath, newParams));
+              // interpolate modifies newParams, only query params are left
+              $location.search(newParams);
+            } else {
+              throw $routeMinErr('norout', 'Tried updating route when with no current route');
+            }
+          }
+        };
+
+    $rootScope.$on('$locationChangeStart', prepareRoute);
+    $rootScope.$on('$locationChangeSuccess', commitRoute);
+
+    return $route;
+
+    /////////////////////////////////////////////////////
+
+    /**
+     * @param on {string} current url
+     * @param route {Object} route regexp to match the url against
+     * @return {?Object}
+     *
+     * @description
+     * Check if the route matches the current url.
+     *
+     * Inspired by match in
+     * visionmedia/express/lib/router/router.js.
+     */
+    function switchRouteMatcher(on, route) {
+      var keys = route.keys,
+          params = {};
+
+      if (!route.regexp) return null;
+
+      var m = route.regexp.exec(on);
+      if (!m) return null;
+
+      for (var i = 1, len = m.length; i < len; ++i) {
+        var key = keys[i - 1];
+
+        var val = m[i];
+
+        if (key && val) {
+          params[key.name] = val;
+        }
+      }
+      return params;
+    }
+
+    function prepareRoute($locationEvent) {
+      var lastRoute = $route.current;
+
+      preparedRoute = parseRoute();
+      preparedRouteIsUpdateOnly = preparedRoute && lastRoute && preparedRoute.$$route === lastRoute.$$route
+          && angular.equals(preparedRoute.pathParams, lastRoute.pathParams)
+          && !preparedRoute.reloadOnSearch && !forceReload;
+
+      if (!preparedRouteIsUpdateOnly && (lastRoute || preparedRoute)) {
+        if ($rootScope.$broadcast('$routeChangeStart', preparedRoute, lastRoute).defaultPrevented) {
+          if ($locationEvent) {
+            $locationEvent.preventDefault();
+          }
+        }
+      }
+    }
+
+    function commitRoute() {
+      var lastRoute = $route.current;
+      var nextRoute = preparedRoute;
+
+      if (preparedRouteIsUpdateOnly) {
+        lastRoute.params = nextRoute.params;
+        angular.copy(lastRoute.params, $routeParams);
+        $rootScope.$broadcast('$routeUpdate', lastRoute);
+      } else if (nextRoute || lastRoute) {
+        forceReload = false;
+        $route.current = nextRoute;
+        if (nextRoute) {
+          if (nextRoute.redirectTo) {
+            if (angular.isString(nextRoute.redirectTo)) {
+              $location.path(interpolate(nextRoute.redirectTo, nextRoute.params)).search(nextRoute.params)
+                       .replace();
+            } else {
+              $location.url(nextRoute.redirectTo(nextRoute.pathParams, $location.path(), $location.search()))
+                       .replace();
+            }
+          }
+        }
+
+        $q.when(nextRoute).
+          then(function() {
+            if (nextRoute) {
+              var locals = angular.extend({}, nextRoute.resolve),
+                  template, templateUrl;
+
+              angular.forEach(locals, function(value, key) {
+                locals[key] = angular.isString(value) ?
+                    $injector.get(value) : $injector.invoke(value, null, null, key);
+              });
+
+              if (angular.isDefined(template = nextRoute.template)) {
+                if (angular.isFunction(template)) {
+                  template = template(nextRoute.params);
+                }
+              } else if (angular.isDefined(templateUrl = nextRoute.templateUrl)) {
+                if (angular.isFunction(templateUrl)) {
+                  templateUrl = templateUrl(nextRoute.params);
+                }
+                if (angular.isDefined(templateUrl)) {
+                  nextRoute.loadedTemplateUrl = $sce.valueOf(templateUrl);
+                  template = $templateRequest(templateUrl);
+                }
+              }
+              if (angular.isDefined(template)) {
+                locals['$template'] = template;
+              }
+              return $q.all(locals);
+            }
+          }).
+          then(function(locals) {
+            // after route change
+            if (nextRoute == $route.current) {
+              if (nextRoute) {
+                nextRoute.locals = locals;
+                angular.copy(nextRoute.params, $routeParams);
+              }
+              $rootScope.$broadcast('$routeChangeSuccess', nextRoute, lastRoute);
+            }
+          }, function(error) {
+            if (nextRoute == $route.current) {
+              $rootScope.$broadcast('$routeChangeError', nextRoute, lastRoute, error);
+            }
+          });
+      }
+    }
+
+
+    /**
+     * @returns {Object} the current active route, by matching it against the URL
+     */
+    function parseRoute() {
+      // Match a route
+      var params, match;
+      angular.forEach(routes, function(route, path) {
+        if (!match && (params = switchRouteMatcher($location.path(), route))) {
+          match = inherit(route, {
+            params: angular.extend({}, $location.search(), params),
+            pathParams: params});
+          match.$$route = route;
+        }
+      });
+      // No route matched; fallback to "otherwise" route
+      return match || routes[null] && inherit(routes[null], {params: {}, pathParams:{}});
+    }
+
+    /**
+     * @returns {string} interpolation of the redirect path with the parameters
+     */
+    function interpolate(string, params) {
+      var result = [];
+      angular.forEach((string || '').split(':'), function(segment, i) {
+        if (i === 0) {
+          result.push(segment);
+        } else {
+          var segmentMatch = segment.match(/(\w+)(?:[?*])?(.*)/);
+          var key = segmentMatch[1];
+          result.push(params[key]);
+          result.push(segmentMatch[2] || '');
+          delete params[key];
+        }
+      });
+      return result.join('');
+    }
+  }];
+}
+
+ngRouteModule.provider('$routeParams', $RouteParamsProvider);
+
+
+/**
+ * @ngdoc service
+ * @name $routeParams
+ * @requires $route
+ *
+ * @description
+ * The `$routeParams` service allows you to retrieve the current set of route parameters.
+ *
+ * Requires the {@link ngRoute `ngRoute`} module to be installed.
+ *
+ * The route parameters are a combination of {@link ng.$location `$location`}'s
+ * {@link ng.$location#search `search()`} and {@link ng.$location#path `path()`}.
+ * The `path` parameters are extracted when the {@link ngRoute.$route `$route`} path is matched.
+ *
+ * In case of parameter name collision, `path` params take precedence over `search` params.
+ *
+ * The service guarantees that the identity of the `$routeParams` object will remain unchanged
+ * (but its properties will likely change) even when a route change occurs.
+ *
+ * Note that the `$routeParams` are only updated *after* a route change completes successfully.
+ * This means that you cannot rely on `$routeParams` being correct in route resolve functions.
+ * Instead you can use `$route.current.params` to access the new route's parameters.
+ *
+ * @example
+ * ```js
+ *  // Given:
+ *  // URL: http://server.com/index.html#/Chapter/1/Section/2?search=moby
+ *  // Route: /Chapter/:chapterId/Section/:sectionId
+ *  //
+ *  // Then
+ *  $routeParams ==> {chapterId:'1', sectionId:'2', search:'moby'}
+ * ```
+ */
+function $RouteParamsProvider() {
+  this.$get = function() { return {}; };
+}
+
+ngRouteModule.directive('ngView', ngViewFactory);
+ngRouteModule.directive('ngView', ngViewFillContentFactory);
+
+
+/**
+ * @ngdoc directive
+ * @name ngView
+ * @restrict ECA
+ *
+ * @description
+ * # Overview
+ * `ngView` is a directive that complements the {@link ngRoute.$route $route} service by
+ * including the rendered template of the current route into the main layout (`index.html`) file.
+ * Every time the current route changes, the included view changes with it according to the
+ * configuration of the `$route` service.
+ *
+ * Requires the {@link ngRoute `ngRoute`} module to be installed.
+ *
+ * @animations
+ * enter - animation is used to bring new content into the browser.
+ * leave - animation is used to animate existing content away.
+ *
+ * The enter and leave animation occur concurrently.
+ *
+ * @scope
+ * @priority 400
+ * @param {string=} onload Expression to evaluate whenever the view updates.
+ *
+ * @param {string=} autoscroll Whether `ngView` should call {@link ng.$anchorScroll
+ *                  $anchorScroll} to scroll the viewport after the view is updated.
+ *
+ *                  - If the attribute is not set, disable scrolling.
+ *                  - If the attribute is set without value, enable scrolling.
+ *                  - Otherwise enable scrolling only if the `autoscroll` attribute value evaluated
+ *                    as an expression yields a truthy value.
+ * @example
+    <example name="ngView-directive" module="ngViewExample"
+             deps="angular-route.js;angular-animate.js"
+             animations="true" fixBase="true">
+      <file name="index.html">
+        <div ng-controller="MainCtrl as main">
+          Choose:
+          <a href="Book/Moby">Moby</a> |
+          <a href="Book/Moby/ch/1">Moby: Ch1</a> |
+          <a href="Book/Gatsby">Gatsby</a> |
+          <a href="Book/Gatsby/ch/4?key=value">Gatsby: Ch4</a> |
+          <a href="Book/Scarlet">Scarlet Letter</a><br/>
+
+          <div class="view-animate-container">
+            <div ng-view class="view-animate"></div>
+          </div>
+          <hr />
+
+          <pre>$location.path() = {{main.$location.path()}}</pre>
+          <pre>$route.current.templateUrl = {{main.$route.current.templateUrl}}</pre>
+          <pre>$route.current.params = {{main.$route.current.params}}</pre>
+          <pre>$routeParams = {{main.$routeParams}}</pre>
+        </div>
+      </file>
+
+      <file name="book.html">
+        <div>
+          controller: {{book.name}}<br />
+          Book Id: {{book.params.bookId}}<br />
+        </div>
+      </file>
+
+      <file name="chapter.html">
+        <div>
+          controller: {{chapter.name}}<br />
+          Book Id: {{chapter.params.bookId}}<br />
+          Chapter Id: {{chapter.params.chapterId}}
+        </div>
+      </file>
+
+      <file name="animations.css">
+        .view-animate-container {
+          position:relative;
+          height:100px!important;
+          background:white;
+          border:1px solid black;
+          height:40px;
+          overflow:hidden;
+        }
+
+        .view-animate {
+          padding:10px;
+        }
+
+        .view-animate.ng-enter, .view-animate.ng-leave {
+          -webkit-transition:all cubic-bezier(0.250, 0.460, 0.450, 0.940) 1.5s;
+          transition:all cubic-bezier(0.250, 0.460, 0.450, 0.940) 1.5s;
+
+          display:block;
+          width:100%;
+          border-left:1px solid black;
+
+          position:absolute;
+          top:0;
+          left:0;
+          right:0;
+          bottom:0;
+          padding:10px;
+        }
+
+        .view-animate.ng-enter {
+          left:100%;
+        }
+        .view-animate.ng-enter.ng-enter-active {
+          left:0;
+        }
+        .view-animate.ng-leave.ng-leave-active {
+          left:-100%;
+        }
+      </file>
+
+      <file name="script.js">
+        angular.module('ngViewExample', ['ngRoute', 'ngAnimate'])
+          .config(['$routeProvider', '$locationProvider',
+            function($routeProvider, $locationProvider) {
+              $routeProvider
+                .when('/Book/:bookId', {
+                  templateUrl: 'book.html',
+                  controller: 'BookCtrl',
+                  controllerAs: 'book'
+                })
+                .when('/Book/:bookId/ch/:chapterId', {
+                  templateUrl: 'chapter.html',
+                  controller: 'ChapterCtrl',
+                  controllerAs: 'chapter'
+                });
+
+              $locationProvider.html5Mode(true);
+          }])
+          .controller('MainCtrl', ['$route', '$routeParams', '$location',
+            function($route, $routeParams, $location) {
+              this.$route = $route;
+              this.$location = $location;
+              this.$routeParams = $routeParams;
+          }])
+          .controller('BookCtrl', ['$routeParams', function($routeParams) {
+            this.name = "BookCtrl";
+            this.params = $routeParams;
+          }])
+          .controller('ChapterCtrl', ['$routeParams', function($routeParams) {
+            this.name = "ChapterCtrl";
+            this.params = $routeParams;
+          }]);
+
+      </file>
+
+      <file name="protractor.js" type="protractor">
+        it('should load and compile correct template', function() {
+          element(by.linkText('Moby: Ch1')).click();
+          var content = element(by.css('[ng-view]')).getText();
+          expect(content).toMatch(/controller\: ChapterCtrl/);
+          expect(content).toMatch(/Book Id\: Moby/);
+          expect(content).toMatch(/Chapter Id\: 1/);
+
+          element(by.partialLinkText('Scarlet')).click();
+
+          content = element(by.css('[ng-view]')).getText();
+          expect(content).toMatch(/controller\: BookCtrl/);
+          expect(content).toMatch(/Book Id\: Scarlet/);
+        });
+      </file>
+    </example>
+ */
+
+
+/**
+ * @ngdoc event
+ * @name ngView#$viewContentLoaded
+ * @eventType emit on the current ngView scope
+ * @description
+ * Emitted every time the ngView content is reloaded.
+ */
+ngViewFactory.$inject = ['$route', '$anchorScroll', '$animate'];
+function ngViewFactory($route, $anchorScroll, $animate) {
+  return {
+    restrict: 'ECA',
+    terminal: true,
+    priority: 400,
+    transclude: 'element',
+    link: function(scope, $element, attr, ctrl, $transclude) {
+        var currentScope,
+            currentElement,
+            previousLeaveAnimation,
+            autoScrollExp = attr.autoscroll,
+            onloadExp = attr.onload || '';
+
+        scope.$on('$routeChangeSuccess', update);
+        update();
+
+        function cleanupLastView() {
+          if (previousLeaveAnimation) {
+            $animate.cancel(previousLeaveAnimation);
+            previousLeaveAnimation = null;
+          }
+
+          if (currentScope) {
+            currentScope.$destroy();
+            currentScope = null;
+          }
+          if (currentElement) {
+            previousLeaveAnimation = $animate.leave(currentElement);
+            previousLeaveAnimation.then(function() {
+              previousLeaveAnimation = null;
+            });
+            currentElement = null;
+          }
+        }
+
+        function update() {
+          var locals = $route.current && $route.current.locals,
+              template = locals && locals.$template;
+
+          if (angular.isDefined(template)) {
+            var newScope = scope.$new();
+            var current = $route.current;
+
+            // Note: This will also link all children of ng-view that were contained in the original
+            // html. If that content contains controllers, ... they could pollute/change the scope.
+            // However, using ng-view on an element with additional content does not make sense...
+            // Note: We can't remove them in the cloneAttchFn of $transclude as that
+            // function is called before linking the content, which would apply child
+            // directives to non existing elements.
+            var clone = $transclude(newScope, function(clone) {
+              $animate.enter(clone, null, currentElement || $element).then(function onNgViewEnter() {
+                if (angular.isDefined(autoScrollExp)
+                  && (!autoScrollExp || scope.$eval(autoScrollExp))) {
+                  $anchorScroll();
+                }
+              });
+              cleanupLastView();
+            });
+
+            currentElement = clone;
+            currentScope = current.scope = newScope;
+            currentScope.$emit('$viewContentLoaded');
+            currentScope.$eval(onloadExp);
+          } else {
+            cleanupLastView();
+          }
+        }
+    }
+  };
+}
+
+// This directive is called during the $transclude call of the first `ngView` directive.
+// It will replace and compile the content of the element with the loaded template.
+// We need this directive so that the element content is already filled when
+// the link function of another directive on the same element as ngView
+// is called.
+ngViewFillContentFactory.$inject = ['$compile', '$controller', '$route'];
+function ngViewFillContentFactory($compile, $controller, $route) {
+  return {
+    restrict: 'ECA',
+    priority: -400,
+    link: function(scope, $element) {
+      var current = $route.current,
+          locals = current.locals;
+
+      $element.html(locals.$template);
+
+      var link = $compile($element.contents());
+
+      if (current.controller) {
+        locals.$scope = scope;
+        var controller = $controller(current.controller, locals);
+        if (current.controllerAs) {
+          scope[current.controllerAs] = controller;
+        }
+        $element.data('$ngControllerController', controller);
+        $element.children().data('$ngControllerController', controller);
+      }
+
+      link(scope);
+    }
+  };
+}
+
+
+})(window, window.angular);
+
+},{}],22:[function(require,module,exports){
+require('./angular-route');
+module.exports = 'ngRoute';
+
+},{"./angular-route":21}],23:[function(require,module,exports){
 /**
  * @license AngularJS v1.4.3
  * (c) 2010-2015 Google, Inc. http://angularjs.org
@@ -28362,3 +37891,3942 @@ var minlengthDirective = function() {
 })(window, document);
 
 !window.angular.$$csp() && window.angular.element(document.head).prepend('<style type="text/css">@charset "UTF-8";[ng\\:cloak],[ng-cloak],[data-ng-cloak],[x-ng-cloak],.ng-cloak,.x-ng-cloak,.ng-hide:not(.ng-hide-animate){display:none !important;}ng\\:form{display:block;}.ng-animate-shim{visibility:hidden;}.ng-anchor{position:absolute;}</style>');
+},{}],24:[function(require,module,exports){
+require('./angular');
+module.exports = angular;
+
+},{"./angular":23}],25:[function(require,module,exports){
+var angular = require("angular");var tv4 = require("tv4");module.exports = /**
+ * formula.js
+ * Generic JSON Schema form builder
+ *
+ * Norsk Polarinstutt 2014, http://npolar.no/
+ */
+
+angular.module('formula', []);
+
+/**
+ * formula.js
+ * Generic JSON Schema form builder
+ *
+ * Norsk Polarinstutt 2014, http://npolar.no/
+ */
+
+angular.module('formula')
+	.directive('formulaFieldDefinition',
+	function() {
+		return {
+			restrict: 'A',
+			require: '^formula',
+			compile: function(element, attrs) {
+				attrs.$set('formulaFieldDefinition'); // unset
+				var html = element.html();
+				
+				return function(scope, element, attrs, controller) {
+					controller.fieldDefinition = html;
+				};
+			}
+		};
+	});
+
+/**
+ * formula.js
+ * Generic JSON Schema form builder
+ *
+ * Norsk Polarinstutt 2014, http://npolar.no/
+ */
+
+angular.module('formula')
+	.directive('formulaFieldInstance',
+	['$compile',
+	function($compile) {
+		return {
+			restrict: 'AE',
+			require: '^formula',
+			scope: { field: '=' },
+			compile: function() {
+				// TODO: append element.html() to element?
+				
+				return function(scope, element, attrs, controller) {
+					var elem = angular.element(controller.fieldDefinition);
+					$compile(elem)(scope);
+					element.prepend(elem);
+				};
+			}
+		};
+	}]);
+
+/**
+ * formula.js
+ * Generic JSON Schema form builder
+ *
+ * Norsk Polarinstutt 2014, http://npolar.no/
+ */
+
+angular.module('formula')
+	.directive('formulaField',
+	['$compile', 'formulaModel',
+	function($compile, model) {
+		return {
+			restrict: 'A',
+			require: [ '^formula', '?^formulaFieldInstance' ],
+			scope: { field: '=formulaField' },
+			link: function(scope, element, attrs, controller) {
+				var field = scope.field;
+				scope.form = controller[0].form;
+				scope.backupValue = null;
+				
+				if(controller[1]) {
+					scope.field = controller[1].field;
+				}
+				
+				attrs.$set('id', field.uid);
+				attrs.$set('ngModel', 'field.value');
+				attrs.$set('formulaField'); // unset
+				
+				if(field.disabled) {
+					attrs.$set('disabled', 'disabled');
+				}
+				
+				var elem = angular.element(element);
+				var type = field.type ? field.type.split(':') : null;
+				type = type ? { main: type[0], sub: type[1] } : null;
+				
+				if(type.main == 'input') {
+					switch(type.sub) {
+					case 'textarea':
+						elem = angular.element('<textarea>');
+						break;
+						
+					case 'select':
+						elem = angular.element('<select>');
+						
+						if(element.children().length) {
+							angular.forEach(element.children(), function(child) {
+								elem.append(child);
+							});
+						} else {
+							elem.attr('ng-options', 'value.id as value.label for value in field.values');
+						}
+						
+						if(field.multiple) {
+							elem.attr('multiple', 'multiple');
+						}
+						break;
+						
+					default:
+						elem = angular.element('<input>');
+						elem.attr('type', type.sub);
+						
+						switch(type.sub) {
+						case 'number':
+						case 'range':
+							if(field.step !== null) {
+								elem.attr('step', field.step);
+							}
+							break;
+						
+						case 'any':
+							elem.attr('type', 'text');
+							break;
+						}
+					}
+					
+					angular.forEach(attrs, function(val, key) {
+						if(attrs.$attr[key]) {
+							elem.attr(attrs.$attr[key], val);
+						}
+					});
+				}
+				
+				// Add class based on field parents and ID
+				var path = 'formula-';
+				
+				angular.forEach(field.parents, function(parent) {
+					path += parent.id + '/';
+				});
+				
+				if(field.id) {
+					path += field.id;
+				} else if(field.parents) {
+					path = path.substr(0, path.length - 1);
+				}
+				
+				elem.addClass(path);
+				
+				$compile(elem)(scope);
+				element.replaceWith(elem);
+				
+				if(type.main == 'input') {
+					scope.$watch('field.value', function(n, o) {
+						if(!field.dirty && (n !== o)) {
+							field.dirty = true;
+						}
+						
+						if(!field.parents) {
+							field.validate(true, true);
+						}
+					});
+				} else if(type.main == 'object') {
+					scope.$watch('field.fields', function() {
+						field.validate(false, true);
+					}, true);
+				} else if(type.main == 'array') {
+					scope.$watch('field.values', function() {
+						field.validate(false, true);
+					}, true);
+				}
+				
+				// Evaluate condition
+				if(field.condition) {
+					scope.model = model.data;
+					scope.$watchCollection('model', function(model) {
+						var pass = true, condition = (field.condition instanceof Array ? field.condition : [ field.condition ]);
+						
+						angular.forEach(condition, function(cond) {
+							var local = model, subCond, parents = field.parents, pathSplitted;
+							
+							if(pass) {
+								// Absolute JSON path
+								if(cond[0] == '#') {
+									parents = [];
+									
+									// Slash-delimited resolution
+									if(cond[1] == '/') {
+										pathSplitted = cond.substr(1).split('/');
+									}
+									
+									// Dot-delimited resolution
+									else {
+										pathSplitted = cond.substr(1).split('.');
+										if(!pathSplitted[0].length) {
+											parents.splice(0, 1);
+										}
+									}
+									
+									angular.forEach(pathSplitted, function(split, index) {
+										if(isNaN(split)) {
+											parents.push({ id: split, index: null });
+										} else if(index > 0) {
+											parents[index - 1].index = Number(split);
+										}
+									});
+									
+									cond = parents[parents.length - 1].id;
+									parents.splice(parents.length - 1, 1);
+								}
+								
+								angular.forEach(parents, function(parent) {
+									if(local) {
+										local = (parent.index !== null ? local[parent.index][parent.id] : local[parent.id]);
+									}
+								});
+								
+								if(local && field.index !== null) {
+									local = local[field.index];
+								}
+								
+								var evaluate = scope.$eval(cond, local);
+								if(!local || evaluate === undefined || evaluate === false) {
+									pass = false;
+								}
+							}
+						});
+						
+						if(field.visible != (field.visible = field.hidden ? false : pass)) {
+							var currentValue = field.value;
+							field.value = scope.backupValue;
+							scope.backupValue = currentValue;
+						}
+					});
+				}
+			},
+			terminal: true
+		};
+	}]);
+
+/**
+ * formula.js
+ * Generic JSON Schema form builder
+ *
+ * Norsk Polarinstutt 2014, http://npolar.no/
+ */
+
+angular.module('formula')
+	.directive('formula',
+	['formulaJsonLoader', 'formulaModel', 'formulaSchema', 'formulaForm', 'formulaI18n', '$http', '$compile', '$templateCache',
+	function(jsonLoader, model, schema, form, i18n, $http, $compile, $templateCache) {
+		return {
+			restrict: 'A',
+            scope: { data: '=formula' },
+			controller: ['$scope', '$attrs', '$element', function($scope, $attrs, $element) {
+				var controller = this, formBuffer = { pending: false, data: null };
+				
+				if($scope.data.model) {
+					model.data = $scope.data.model;
+					model.locked = true;
+				}
+				
+				controller.schema	= $scope.schema = new schema();
+				controller.form  	= $scope.form = new form();
+				
+				$scope.onsave		= $scope.form.onsave;
+				$scope.template 	= $scope.data.template || 'default';
+				$scope.language 	= { uri: $scope.data.language || null, code: null };
+				
+				function formBuild(formURI) {
+					if(!formBuffer.pending || formURI) {
+						$scope.schema.then(function(schemaData) {
+							if(schemaData) {
+								formBuffer.pending = false;
+								controller.form = $scope.form = new form(formURI);
+								$scope.form.onsave = $scope.onsave;
+								$scope.form.build(schemaData, formBuffer.data);
+								$scope.form.translate($scope.language.code);
+								
+								$scope.form.uiSaveHidden		= $scope.data.saveHidden;
+								$scope.form.uiValidateHidden	= $scope.data.validateHidden;
+							}
+						});
+					}
+				}
+                
+				// Enable form definition hot-swapping
+                $scope.$watch('data.form', function(uri) {
+                    if(uri) {
+                        formBuffer.pending = true;
+                        jsonLoader(uri).then(function(data) {
+                            formBuffer.data = data;
+                            formBuild(uri);
+                        });
+                    } else {
+                        formBuffer.data = null;
+                        formBuild(null);
+                    }
+                });
+				
+				// Enable schema hot-swapping
+				$scope.$watch('data.schema', function(uri) {
+					if(($scope.schema.uri = uri)) {
+						$scope.schema.deref(uri).then(function(schemaData) {
+							formBuild();
+						});
+					}
+				});
+				
+				// Enable template hot-swapping
+				$scope.$watch('data.template', function(template) {
+					var templateName = 'formula/' + (template || ""), templateElement;
+					
+					if(templateName.substr(0, -5) != '.html') {
+						templateName += '.html';
+					}
+					
+					if(!(templateElement = $templateCache.get(templateName))) {
+						templateElement = $templateCache.get('formula/default.html');
+					}
+					
+					if($element.prop('tagName') == 'FORM') {
+						$element.empty();
+						$element.append(templateElement.children());
+						$compile($element.children())($scope);
+					} else {
+						$element.empty();
+						$element.prepend(templateElement);
+						$compile($element.children())($scope);
+					}
+				});
+				
+				// Enable language hot-swapping
+				$scope.$watch('data.language', function(uri) {
+					var code = i18n.code(uri);
+					
+					if(uri && !code) {
+						i18n.add(uri).then(function(code) {
+							$scope.language.code = code;
+							$scope.form.translate(code);
+						});
+					} else {
+						$scope.language.code = code;
+						$scope.form.translate(code);
+					}
+				});
+				
+				// Enable data hot-swapping
+				$scope.$watch('data.model', function(data) {
+					if(!formBuffer.pending && model.set(data)) {
+						formBuild();
+					}
+					
+					model.locked = false;
+				}, true);
+				
+				// Enable onsave callback hot-swapping
+				$scope.$watch('data.onsave', function(callback) {
+					if(callback) {
+						$scope.form.onsave = $scope.onsave = callback;
+					}
+				});
+			}]
+		};
+	}]);
+
+/**
+ * formula.js
+ * Generic JSON Schema form builder
+ *
+ * Norsk Polarinstutt 2014, http://npolar.no/
+ */
+
+angular.module('formula')
+	
+	/**
+	 * @filter inlineValues
+	 * 
+	 * Filter used to inline an array of values.
+	 */
+	
+	.filter('formulaInlineValues', function() {
+		return function(input, params) {
+			var result = [];
+			
+			angular.forEach(input, function(field) {
+				if(field.value === null) {
+					result.push('null');
+				} else if(field.value === undefined) {
+					result.push('undefined');
+				} else if(field.value instanceof Array) {
+					result.push('Array[' + field.value.length + ']');
+				} else switch(typeof field.value) {
+					case 'string':
+						var strlen = field.value.length;
+						
+						if(strlen && strlen < 10) {
+							result.push(field.value);
+						} else if(strlen) {
+							result.push(field.value.substr(0, 10) + '...');
+						}
+						
+						break;
+						
+					case 'number':
+					case 'boolean':
+						result.push(field.value);
+						break;
+						
+					default:
+						result.push('Object');
+				}
+			});
+			
+			return result.join(', ');
+		};
+	});
+
+/**
+ * formula.js
+ * Generic JSON Schema form builder
+ *
+ * Norsk Polarinstutt 2014, http://npolar.no/
+ */
+
+angular.module('formula')
+	
+	/**
+	 * @filter replace
+	 * 
+	 * Filter used to replace placeholders in a string.
+	 */
+	
+	.filter('formulaReplace', function() {
+		return function(input, params) {
+			var result = input, match = input.match(/\{[^\}]*\}/g);
+			
+			angular.forEach(match, function(v, k) {
+				result = result.replace(v, params[v.substr(1, v.length - 2)]);
+			});
+			
+			return result;
+		};
+	});
+
+/**
+ * formula.js
+ * Generic JSON Schema form builder
+ *
+ * Norsk Polarinstutt 2014, http://npolar.no/
+ */
+
+angular.module('formula')
+	
+	/**
+	 * @factory field
+	 * 
+	 * Service used to create HTML form field handler class instances.
+	 * 
+	 * @returns field class constructor
+	 */
+	
+	.factory('formulaField',
+	['$filter', 'formulaLog', 'formulaFormat',
+	function($filter, log, format) {
+		/**
+		 * @class field
+		 * 
+		 * HTML form field handler class.
+		 * If the second (id) parameter is specified, the field will be recognized as a schema field.
+		 * Schema fields are fields generated from JSON Schemas, and does not inherit overloaded data.
+		 * 
+		 * @param data A mandatory object containing default data values
+		 * @param id An optional string representing the unique field ID
+		 * @param parents An optional array of the field parents
+		 */
+		
+		function field(data, id, parents) {
+			if(typeof data == 'object') {
+				this.dirty = false;
+				this.form = null;
+				this.id = id || data.id || null;
+				this.index = null;
+				this.nullable = data.nullable || false;
+				this.parents = parents || null;
+				this.path = null;
+				this.schema = data.schema || data;
+				
+				var invalidCharacters = ['.', '/', '#'];
+				angular.forEach(invalidCharacters, function(char) {
+					if(this.id && this.id.indexOf(char) >= 0) {
+						log.warning(log.codes.FIELD_INVALID_ID, { character: char, field: this.path });
+					}
+				}, this);
+				
+				this.uidGen();
+				this.pathGen();
+				this.attrsSet(data);
+			}
+		}
+		
+		field.uids = [];
+		
+		field.prototype = {
+			
+			/**
+			 * @method attrsSet
+			 *
+			 * Function used to copy attributes from a source object.
+			 * Useful when creating fields inheriting data from a fomr definition file.
+			 * 
+			 * @param source Source object the data should be copied from
+			 * @returns The updated field instance
+			 */
+			
+			attrsSet: function(source) {
+				var attribs = 'condition,default,description,disabled,enum,format,hidden,maximum,maxLength,minimum,minLength,multiple,pattern,required,step,title,values'.split(',');
+				angular.forEach(source, function(v, k) {
+					if(attribs.indexOf(k) != -1) {
+						this[k] = v;
+					}
+				}, this);
+				
+				// Translate default value tokens
+				if(typeof this.default == 'string') {
+					var match = this.default.match(/^%(.*)%$/), replace;
+					if(match) {
+						switch(match[1]) {
+						case 'date':
+							replace = $filter('date')(new Date(), 'yyyy-MM-dd', 'UTC');
+							break;
+							
+						case 'datetime':
+							replace = $filter('date')(new Date(), 'yyyy-MM-ddThh:mm:ss', 'UTC') + 'Z';
+							break;
+							
+						case 'time':
+							replace = $filter('date')(new Date(), 'hh:mm:ss', 'UTC');
+							break;
+							
+						default:
+							log.warning(log.codes.FIELD_UNSUPPORTED_TOKEN, { token: match[1], field: this.path });
+						}
+						
+						if(replace) {
+							this.default = replace;
+						}
+					}
+				}
+				
+				if(this.fields && source.fields) {
+					var formFields = [];
+					
+					// Update field properties based on form specification
+					angular.forEach(source.fields, function(field) {
+						if(typeof field == 'object') {
+							var fieldMatch = this.fieldFromID(field.id);
+							
+							if(fieldMatch) {
+								formFields.push(field.id);
+								fieldMatch.attrsSet(field);
+							}
+						} else if(typeof field == 'string') {
+							formFields.push(field);
+						}
+					}, this);
+					
+					// Remove unused fields
+					for(var f in this.fields) {
+						if(formFields.indexOf(this.fields[f].id) == -1) {
+							this.fields.splice(f, 1);
+						}
+					}
+				}
+				
+				if(source.type instanceof Array) {
+					if(source.type.length == 1) {
+						source.type = source.type[0];
+					} else if(source.type.length == 2) {
+						if(source.type[0] == 'null') {
+							source.type = source.type[1];
+							this.nullable = true;
+						} else if(source.type[1] == 'null') {
+							source.type = source.type[0];
+							this.nullable = true;
+						}
+					}
+				}
+				
+				if(source.type == 'select' || source.enum) {
+					this.type = 'input:select';
+					this.multiple = !!source.multiple;
+				} else {
+					if(this.format) {
+						var formatNoDash = this.format.replace('-', '');
+						
+						if(format[formatNoDash]) {
+							switch(formatNoDash) {
+							case 'date':
+							case 'datetime':
+							case 'time':
+								this.type = 'input:' + formatNoDash;
+								break;
+								
+							default:
+								this.type = 'input:text';
+							}
+							
+							tv4.addFormat(this.format, format[formatNoDash]);
+						} else {
+							log.warning(log.codes.FIELD_UNSUPPORTED_FORMAT, { format: this.format, field: this.path });
+							this.type = 'input:text';
+						}
+					} else {
+						switch(source.type) {
+						case 'any':
+						case 'input:any':
+							this.type = 'input:any';
+							break;
+							
+						case 'array':
+						case 'array:field':
+						case 'array:fieldset':
+							if(source.items) {
+								if(source.items.type == 'object') {
+									this.type = 'array:fieldset';
+									this.fieldAdd(source.items);
+								} else if(source.items.enum) {
+									this.enum = source.items.enum;
+									this.multiple = true;
+									this.type = 'input:select';
+								} else if(source.items.allOf) {
+									log.warning(log.codes.FIELD_UNSUPPORTED_PROPERTY, { property: 'allOf', field: this.path });
+								} else if(source.items.anyOf) {
+									log.warning(log.codes.FIELD_UNSUPPORTED_PROPERTY, { property: 'anyOf', field: this.path });
+								} else if(source.items.oneOf) {
+									log.warning(log.codes.FIELD_UNSUPPORTED_PROPERTY, { property: 'oneOf', field: this.path });
+								} else {
+									this.type = 'array:field';
+									this.fieldAdd(source.items);
+								}
+								if(source.minItems >= 1) {
+									this.required = true;
+								}
+							} else if(source.fields) {
+								this.type = source.type;
+								this.fields = source.fields;
+							} else {
+								log.warning(log.codes.FIELD_MISSING_PROPERTY, { property: 'items', field: this.path });
+								this.type = null;
+							}
+							break;
+							
+						case 'boolean':
+						case 'checkbox':
+						case 'input:checkbox':
+							this.type = 'input:checkbox';
+							break;
+							
+						case 'input:number':
+						case 'integer':
+						case 'number':
+							this.step = source.step || null;
+							this.type = 'input:number';
+							break;
+							
+						case 'input:range':
+						case 'range':
+							this.step = source.step || null;
+							this.type = 'input:range';
+							break;
+							
+						case 'object':
+							if(source.properties) {
+								this.type = 'object';
+								this.fieldAdd(source);
+							} else if(source.fields) {
+								this.type = 'object';
+								this.fields = source.fields;
+							} else {
+								log.warning(log.codes.FIELD_MISSING_PROPERTY, { property: 'properties', field: this.path });
+								this.type = null;
+							}
+							break;
+							
+						case 'input:textarea':
+						case 'textarea':
+							this.type = 'input:textarea';
+							break;
+							
+						case 'input:text':
+						case 'string':
+						case 'text':
+							this.type = 'input:text';
+							break;
+							
+						case undefined:
+							this.type = (this.type || 'input:text');
+							break;
+							
+						default:
+							log.warning(log.codes.FIELD_UNSUPPORTED_TYPE, { type: source.type, field: this.path });
+							this.type = null;
+						}
+					}
+				}
+				
+				// Set schema pattern if not set and pattern is defined
+				if(this.pattern && this.schema && !this.schema.pattern) {
+					this.schema.pattern = this.pattern;
+				}
+				
+				// Add one element to arrays which requires at least one element
+				if(this.typeOf('array') && this.schema.minItems) {
+					if(!this.values) {
+						this.itemAdd();
+					}
+				}
+				
+				// Automatically hide fields by default if ID starts with underscore
+				if((this.id && this.id[0] == '_') && this.hidden !== false) {
+					log.debug(log.codes.FIELD_HIDDEN_DEFAULT, { field: this.path });
+					this.hidden = true;
+				}
+				
+				this.visible = this.hidden ? false : true;
+				
+				if(this.value === undefined) {
+					if((this.value = source.value) === undefined) {
+						if((this.value = this.default) === undefined) {
+							this.value = null;
+						}
+					}
+				}
+				
+				// Ensure array typed default if required
+				if(this.default && source.type == 'array') {
+					if(!(this.default instanceof Array)) {
+						this.default = [ this.default ];
+					}
+				}
+				
+				// Set intial value for select fields with no default
+				if(this.type == 'input:select' && !this.multiple && (this.value === null)) {
+					this.value = this.enum[0];
+				}
+				
+				return this;
+			},
+			
+			/**
+			 * @method fieldAdd
+			 * 
+			 * Function used to add subfields to object and array-typed field.
+			 * 
+			 * @param schema JSON Schema defining the field being added
+			 * @returns true if the field was successfully added, otherwise false
+			 */
+			
+			fieldAdd: function(schema) {
+				if(typeof schema == 'object') {
+					if(!this.fields) {
+						this.fields = [];
+					}
+					
+					var parents = [];
+					angular.forEach(this.parents, function(parent) {
+						parents.push(parent);
+					});
+					parents.push({ id: this.id, index: this.index });
+					
+					if(schema.type == 'object') {
+						angular.forEach(schema.properties, function(val, key) {
+							var newField = new field(val, key, parents);
+							newField.required = (schema.required && schema.required.indexOf(key) != -1);
+							
+							if(newField.type) {
+								newField.index = this.fields.length;
+								this.fields.push(newField);
+							}
+						}, this);
+					} else {
+						var newField = new field(schema, null, parents);
+						newField.index = this.fields.length;
+						this.fields.push(newField);
+					}
+					
+					return true;
+				}
+				
+				// TODO: Warning
+				return false;
+			},
+			
+			/**
+			 * @method fieldFromID
+			 * 
+			 * Function used to get a subfield from specified ID.
+			 * 
+			 * @param id ID used for subfield look-up
+			 * @returns The subfield which matches the specified ID, otherwise null
+			 */
+			
+			fieldFromID: function(id) {
+				var fieldMatch = null;
+				
+				angular.forEach(this.fields, function(field) {
+					if(!fieldMatch && field.id == id) {
+						fieldMatch = field;
+					}
+				});
+				
+				return fieldMatch;
+			},
+			
+			/**
+			 * @method itemAdd
+			 * 
+			 * Function used to add a copy of the subfields for validating.
+			 * The values of each fieldset are automatically monitored.
+			 */
+			
+			itemAdd: function() {
+				if(this.typeOf('array') && this.fields) {
+					if(!this.values) {
+						this.values = [];
+					}
+					
+					var parents = [], index;
+					angular.forEach(this.parents, function(parent) {
+						parents.push(parent);
+					});
+					parents.push({ id: this.id, index: this.index });
+					
+					if(this.typeOf('fieldset')) {
+						index = this.values.push({ fields: angular.copy(this.fields), visible: true, valid: true }) - 1;
+						
+						angular.forEach(this.values[index].fields, function(field) {
+							field.index = index;
+							field.parents = parents;
+							field.uidGen();
+							field.pathGen();
+						});
+					} else {
+						index = this.values.push(angular.copy(this.fields[0])) - 1;
+						var field = this.values[index];
+						field.index = index;
+						field.parents = parents;
+						field.uidGen();
+						field.pathGen();
+					}
+					
+					this.validate(true, false);
+				}
+			},
+			
+			/**
+			 * @method itemIndex
+			 * 
+			 * Function used to return the fieldset index of a subfield based on ID.
+			 * 
+			 * @param id Field ID of the subfield as a string
+			 */
+			
+			itemIndex: function(id) {
+				for(var index in this.fields) {
+					if(this.fields[index].id == id) {
+						return index;
+					}
+				}
+				return -1;
+			},
+			
+			/**
+			 * @method itemRemove
+			 * 
+			 * Function used to remove a fieldset from an array-typed field.
+			 * 
+			 * @param item Index number of the fieldset which should be removed
+			 */
+			
+			itemRemove: function(item) {
+				if(this.typeOf('array') && this.values) {
+					if(this.values.length > item) {
+						this.values.splice(item, 1);
+					}
+					
+					angular.forEach(this.values, function(fs, i) {
+						if(this.typeOf('fieldset')) {
+							angular.forEach(fs.fields, function(field) {
+								field.index = i;
+								field.pathGen();
+							});
+						} else {
+							fs.index = i;
+							fs.pathGen();
+						}
+					}, this);
+				}
+			},
+			
+			/**
+			 * @method itemToggle
+			 * 
+			 * Function used to toggle visibility of a fieldset item.
+			 * 
+			 * @param item Index number of the fieldset which should be toggled
+			 */
+			
+			itemToggle: function(item) {
+				if(this.typeOf('array') && this.values) {
+					if(this.values.length > item) {
+						this.values[item].visible = !this.values[item].visible;
+					}
+				}
+			},
+			
+			/**
+			 * @method pathGen
+			 * 
+			 * Function used to generate full JSON path for fields.
+			 */
+			
+			pathGen: function() {
+				this.path = '#/';
+				
+				angular.forEach(this.parents, function(parent) {
+					if(parent.index !== null) {
+						this.path += parent.index + '/';
+					}
+					
+					this.path += parent.id + '/';
+				}, this);
+				
+				if(this.index !== null) {
+					this.path += this.index;
+					
+					if(this.id) {
+						this.path += '/' + this.id;
+					}
+				} else if(this.id) {
+					this.path += this.id;
+				}
+			},
+			
+			/**
+			 * @method typeOf
+			 * 
+			 * Function used to check if field in a specific type.
+			 * 
+			 * @param type Type to check
+			 * @returns true if field type matches with specified type, otherwise false
+			 */
+			
+			typeOf: function(type) {
+				if(this.type && typeof type == 'string') {
+					var types = this.type.split(':'), match = false;
+					
+					angular.forEach(type.split(' '), function(type) {
+						if(!match && type === this.type || type === types[0] || type === types[1]) {
+							match = true;
+						}
+					}, this);
+						
+					return match;
+				}
+				
+				return false;
+			},
+			
+			/**
+			 * @method uidGen
+			 * 
+			 * Function used to generate a new Unique field ID.
+			 * 
+			 * @param len Optional number parameter to specify the UID-length
+			 * @returns The newly generated UID
+			 */
+			
+			uidGen: function(len) {
+				var uid = 'formula-', chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+				
+				for(var i = 0; i < (len ? len : 8); ++i) {
+					uid += chars[Math.floor(Math.random() * chars.length)];
+				}
+				
+				if(field.uids.indexOf(uid) != -1) {
+					return this.uidGen(len);
+				} else {
+					this.uid = uid;
+				}
+				
+				return uid;
+			},
+			
+			/**
+			 * @method validate
+			 * 
+			 * Function used to validate the field based on its schema.
+			 * This function also sets the field error memeber value if the validation fails,
+			 * and additionally sets the form valid state if a parent form is specified.
+			 * 
+			 * @param silent Prevent setting error flags during validation if true
+			 * @param form Validate entire form during validation if true
+			 * @returns true if the field is valid, otherwise false
+			 */
+			
+			validate: function(silent, form) {
+				if(this.schema) {
+					var fieldError = null, tempValue, match;
+					
+					switch(this.type) {
+					case 'array:field':
+						this.value = [];
+						angular.forEach(this.values, function(field) {
+							if((field.dirty || field.value !== null) && field.validate()) {
+								this.value.push(field.value);
+							}
+						}, this);
+						break;
+						
+					case 'array:fieldset':
+						this.value = [];
+						angular.forEach(this.values, function(fieldset, index) {
+							this.value.push({});
+							fieldset.valid = true;
+								
+							angular.forEach(fieldset.fields, function(field) {
+								if(field.dirty || (field.value !== null) || field.typeOf('array object')) {
+									if(field.validate(silent, false)) {
+										this.value[index][field.id] = field.value;
+									} else fieldset.valid = false;
+								} else fieldset.valid = false;
+							}, this);
+						}, this);
+							
+						// Remove invalid array elements
+						for(var i = 0; i < this.value.length; ++i) {
+							if(!tv4.validate([this.value[i]], this.schema)) {
+								this.value.splice(i--, 1);
+								fieldError = tv4.error;
+								continue;
+							}
+						}
+						break;
+						
+					case 'input:any':
+						if(this.value) {
+							if(!isNaN(this.value)) {
+								tempValue = Number(this.value);
+							} else if((match = this.value.match(/^\[(.*)\]$/))) {
+								tempValue = [match[1]];
+							} else {
+								switch(this.value.toLowerCase()) {
+								case 'true':
+									tempValue = true;
+									break;
+									
+								case 'false':
+									tempValue = false;
+									break;
+									
+								case 'null':
+									tempValue = null;
+									break;
+								}
+							}
+						}
+						break;
+						
+					case 'input:checkbox':
+						this.value = !!this.value;
+						break;
+						
+					case 'input:integer':
+					case 'input:number':
+					case 'input:range':
+						tempValue = (this.value === null ? NaN : Number(this.value));
+						break;
+						
+					case 'input:select':
+						if(this.multiple && !this.value) {
+							this.value = [];
+						} else {
+							switch(this.schema.type) {
+							case 'integer':
+							case 'number':
+								this.value = Number(this.value);
+								break;
+							}
+						}
+						break;
+						
+					case 'object':
+						this.value = {};
+						
+						if(this.fields) {
+							// Populate value as object of valid fields
+							angular.forEach(this.fields, function(field, index) {
+								if(field.dirty || field.value !== null || field.typeOf('array object')) {
+									if(field.validate(field.dirty ? false : true)) {
+										this.value[field.id] = field.value;
+									}
+								}
+							}, this);
+						}
+						break;
+					}
+					
+					var valid = tv4.validate((tempValue !== undefined ? tempValue : this.value), this.schema);
+					
+					if(!valid && this.nullable) {
+						switch(typeof this.value) {
+						case 'string':
+							if(!this.value || !this.value.length) {
+								this.value = null;
+							}
+							break;
+							
+						case 'number':
+							if(isNaN(this.value)) {
+								this.value = null;
+							}
+							break;
+							
+						case 'object':
+							var items = 0;
+							angular.forEach(this.value, function() { items++; });
+							
+							if(!items) {
+								this.value = null;
+							}
+							break;
+						}
+						
+						// TODO: Add support for null-types in tv4
+						if(this.value === null) {
+							fieldError = null;
+							valid = true;
+						}
+					}
+					
+					if(silent !== true) {
+						this.valid = (valid && !fieldError);
+						this.error = fieldError ? fieldError.message : (valid ? null : tv4.error.message);
+					}
+					
+					if((form === true) && this.form) {
+						this.form.validate(true);
+					}
+					
+					return valid;
+				}
+				
+				return false;
+			},
+			
+			/**
+			 * @method valueFromModel
+			 * 
+			 * Function used to set field value based on model object.
+			 * 
+			 * @param model
+			 */
+			
+			valueFromModel: function(model) {
+				if(model[this.id] !== undefined) {
+					var i, j;
+					
+					if(this.type == "object") {
+						for(i in this.fields) {
+							if(model[this.id][this.fields[i].id]) {
+								this.fields[i].value = model[this.id][this.fields[i].id];
+							}
+						}
+					} else if(this.type == "array:fieldset") {
+						this.values = [];
+						
+						for(i in model[this.id]) {
+							this.itemAdd();
+							
+							for(j in this.values[i].fields) {
+								this.values[i].fields[j].valueFromModel(model[this.id][i]);
+							}
+						}
+					} else if(this.type == "array:field") {
+						this.values = [];
+						
+						for(i in model[this.id]) {
+							this.itemAdd();
+							this.values[i].value = model[this.id][i];
+						}
+					} else {
+						this.value = model[this.id];
+					}
+				}
+			}
+		};
+		
+		return field;
+	}]);
+
+/**
+ * formula.js
+ * Generic JSON Schema form builder
+ *
+ * Norsk Polarinstutt 2014, http://npolar.no/
+ */
+
+angular.module('formula')
+	
+	/**
+	 * @factory form
+	 * 
+	 * Service used to create HTML form handler class instances.
+	 * 
+	 * @returns form class constructor
+	 */
+	
+	.factory('formulaForm',
+	['formulaJsonLoader', 'formulaModel', 'formulaField', 'formulaI18n',
+	function(jsonLoader, model, field, i18n) {
+		function fieldsetFromSchema(form, schema) {
+			if(schema && schema.type == 'object') {
+				var fields = [];
+				
+				angular.forEach(schema.properties, function(val, key) {
+					var newField = new field(val, key);
+					newField.form = form;
+					newField.required = newField.required || (schema.required && schema.required.indexOf(key) != -1);
+					newField.valueFromModel(model.data);
+					
+					fields.push(newField);
+				});
+				
+				return fields;
+			}
+			
+			return null;
+		}
+		
+		/**
+		 * @class form
+		 * 
+		 * HTML form handler class.
+		 * 
+		 * @param uri Optional URI to form definition object
+		 */
+		
+		function form(uri) {
+			this.errors = null;
+			this.fieldsets = null;
+			this.i18n = i18n(null);
+			this.schema = null;
+			this.title = null;
+			this.uri = uri || null;
+			this.valid = false;
+			
+			this.onsave = function(model) {
+				window.open("data:application/json," + JSON.stringify(model));
+			};
+		}
+		
+		form.prototype = {
+			
+			/**
+			 * @method activate
+			 * 
+			 * Function used to activate a specified fieldset.
+			 * Useful to hide inactive fieldsets when using a tabbed environment.
+			 * 
+			 * @param fieldset An object or an index number representing the fieldset
+			 */
+			
+			activate: function(fieldset) {
+				angular.forEach(this.fieldsets, function(f, i) {
+					if(typeof fieldset == 'object' || typeof fieldset == 'number') {
+						if((typeof fieldset == 'object') ? (f === fieldset) : (i === fieldset)) {
+							f.active = true;
+						} else {
+							f.active = false;
+						}
+					}
+				});
+			},
+			
+			/**
+			 * @method build
+			 * 
+			 * Function used to build a HTML form based on a JSON Schema.
+			 * 
+			 * @param schema Mandatory JSON Schema object
+			 * @param form Optional form definition object
+			 */
+			
+			build: function(schema, form) {
+				if(typeof schema == 'object') {
+					var baseForm = fieldsetFromSchema(this, schema);
+					baseForm.fieldExtended = function(formField) {
+						for(var i = 0; i < this.length; ++i) {
+							var obj = (typeof formField == 'object');
+							if(this[i].id == (obj ? formField.id : formField)) {
+								if(obj) {
+									var ret = new field(this[i]);
+									return ret.attrsSet(formField);
+								}
+								return new field(this[i]);
+							}
+						}
+						return null;
+					};
+					
+					if(form && form.fieldsets) {
+						this.title = form.title;
+						this.fieldsets = [];
+						
+						angular.forEach(form.fieldsets, function(fs, i) {
+							this.fieldsets.push({ title: fs.title, active: (i ? false : true), fields: [] });
+							angular.forEach(fs.fields, function(f, j) {
+								var field = baseForm.fieldExtended(f);
+								if(field) {
+									field.form = this;
+									this.fieldsets[i].fields.push(field);
+								}
+							}, this);
+						}, this);
+					} else {
+						this.fieldsets = [{ fields: baseForm, active: true }];
+					}
+					
+					this.schema = schema;
+					this.validate(true);
+				}
+			},
+			
+			/**
+			 * @method save
+			 * 
+			 * Function calling a provided callback function used to save the form.
+			 * This function automatically injects the current form model object as a parameter.
+			 * If the callback parameter is not set, the model is displayed in a new window.
+			 * 
+			 * @param callback Function with one object parameter called if the form is valid
+			 * @param validate Prevent form validation if this parameter is set to false
+			 */
+			
+			save: function(callback, validate) {
+				if((validate !== false) && !this.validate()) {
+					return;
+				}
+				
+				if(typeof this.onsave == 'function') {
+					this.onsave(model.data);
+				}
+			},
+			
+			/**
+			 * @method translate
+			 * 
+			 * Function used to translate the form using a specific language.
+			 * 
+			 * @param code ISO 639-3 code to language used for translation
+			 */
+			
+			translate: function(code) {
+				function fieldTranslate(field, parent) {
+					var fieldTranslation = (parent && parent.fields ? (parent.fields[field.id] || null) : null);
+					
+					if(field.type == 'array:fieldset' || field.type == 'object') {
+						angular.forEach(field.fields, function(field) {
+							fieldTranslate(field, fieldTranslation);
+						});
+						
+						angular.forEach(field.values, function(fieldset) {
+							angular.forEach(fieldset.fields, function(field) {
+								fieldTranslate(field, fieldTranslation);
+							});
+						});
+					}
+					
+					if(fieldTranslation) {
+						field.title = fieldTranslation.title || field.title || field.id;
+						field.description = fieldTranslation.description || field.description;
+						
+						if(field.typeOf('select')) {
+							field.values = [];
+							
+							angular.forEach(field.enum, function(key, index) {
+								field.values.push({ id: key, label: fieldTranslation.values ? (fieldTranslation.values[index] || key) : key });
+							});
+						}
+					} else {
+						field.title = field.title || field.id;
+						
+						if(field.typeOf('select')) {
+							field.values = [];
+							
+							angular.forEach(field.enum, function(val) {
+								field.values.push({ id: val, label: val });
+							});
+						}
+					}
+				}
+				
+				this.i18n = i18n(code);
+				
+				angular.forEach(this.fieldsets, function(fs, i) {
+					if(this.i18n.fieldsets) {
+						fs.title = this.i18n.fieldsets[i] || fs.title;
+					}
+					
+					angular.forEach(fs.fields, function(field) {
+						fieldTranslate(field, this.i18n);
+					}, this);
+				}, this);
+			},
+			
+			/**
+			 * @method validate
+			 * 
+			 * Function used to validate all the fields within the form.
+			 * This function also populates the form errors member if the validation fails.
+			 * 
+			 * @param silent Prevent setting field error flags if true
+			 * @returns true if the entire form is valid, otherwise false
+			 */
+			
+			validate: function(silent) {
+				var self = this;
+				this.errors = [];
+				
+				function fieldValidate(field) {
+					if(field.typeOf('array')) {
+						angular.forEach(field.values, function(value) {
+							if(field.typeOf('fieldset')) {
+								angular.forEach(value.fields, function(field) {
+									fieldValidate(field);
+								});
+							} else {
+								fieldValidate(value);
+							}
+						});
+					} else if(field.typeOf('object')) {
+						angular.forEach(field.fields, function(subfield) {
+							fieldValidate(subfield);
+						});
+					}
+					
+					if((field.typeOf('array checkbox object select')) || (field.required || field.dirty || field.value !== null)) {
+						// Fields with a default value are always validated verbosely
+						if(!field.validate(field.dirty ? false : silent, false)) {
+							self.errors.push(field.path + ' (' + tv4.error.message + ')');
+							return false;
+						}
+						
+						return true;
+					}
+					
+					return null; // Field not required, or untouched
+				}
+				
+				model.locked = true;
+				var tempModel = angular.copy(model.data);
+				
+				angular.forEach(this.fieldsets, function(fieldset) {
+					angular.forEach(fieldset.fields, function(field) {
+						var fieldValid = fieldValidate(field);
+						
+						if(fieldValid !== null) {
+							if(fieldValid) {
+								model.data[field.id] = field.value;
+							} else {
+								delete model.data[field.id];
+							}
+						}
+					}, this);
+				}, this);
+				
+				if(angular.equals(tempModel, model.data)) {
+					model.locked = false;
+				}
+				
+				if((this.valid = !(this.errors.length))) {
+					this.errors = null;
+				}
+				
+				return this.valid;
+			}
+		};
+		
+		return form;
+	}]);
+
+/**
+ * formula.js
+ * Generic JSON Schema form builder
+ *
+ * Norsk Polarinstutt 2014, http://npolar.no/
+ */
+
+angular.module('formula')
+	
+	/**
+	 * @factory format
+	 * 
+	 * Service used for generating JSON Schema format validation functions.
+	 * 
+	 * @returns object with supported format properties as tv4 addFormat functions
+	 */
+	
+	.factory('formulaFormat',
+	function() {
+		return {
+			color: // CSS 2.1 color
+			function(data, schema) {
+				var colors = "aqua,black,blue,fuchsia,gray,green,lime,maroon,navy,olive,orange,purple,red,silver,teal,white,yellow";
+				
+				if(typeof data == 'string') {
+					// TODO: rgb-colors restricted to values between 0 and 255 (inclusive)
+					if(colors.split(',').indexOf(data.toLowerCase()) != -1 || /^(#([a-f0-9]{3}|[a-f0-9]{6})|rgb\(\s?\d{1,3}%?,\s?\d{1,3}%?,\s?\d{1,3}%?\s?\))$/i.test(data)) {
+						return null;
+					}
+					
+				}
+				
+				return 'CSS 2.1 color';
+			},
+			date:  // ISO 8601 date
+			function(data, schema) {
+				if(typeof data == 'string' && /^\d{4}(-\d{2}){2}$/.test(data)) {
+					return null;
+				}
+				
+				return 'ISO 8601 date';
+			},
+			datetime: // ISO 8601 datetime combination
+			function(data, schema) {
+				if(typeof data == 'string' && /^\d{4}(-\d{2}){2}T\d{2}(:\d{2}){2}(.\d+)?(([+-](\d{2}|\d{4}|\d{2}:\d{2}))|Z)$/.test(data)) {
+					return null;
+				}
+				
+				return 'ISO 8601 datetime';
+			},
+			email: // RCF 3696 email
+			function(data, schema) {
+				var local = /^[-+a-z0-9!#$%&'*=?^_`{|}~\/]([-+a-z0-9!#$%&'*=?^_`{|}~\/]|\.(?!\.)){0,62}[-+a-z0-9!#$%&'*=?^_`{|}~\/]$/i,
+					domain = /^[-a-z0-9]([-a-z0-9]|\.(?!\.)){0,253}[-a-z0-9]$/i, // TODO: IPv4 and IPv6 support
+					comment = /\(.*\)/g,
+					parts = (typeof data == 'string' ? data.split('@') : []);
+					
+				if(parts.length == 2 && data.length <= 254) {
+					if(local.test(parts[0].replace(comment, '')) && domain.test(parts[1].replace(comment, ''))) {
+						return null;
+					}
+				}
+				
+				return 'RCF 3696 e-mail address';
+			},
+			time: // ISO 8601 time
+			function(data, schema) {
+				if(typeof data == 'string' && /^\d{2}(:\d{2}){2}$/.test(data)) {
+					return null;
+				}
+				
+				return 'ISO 8601 time';
+			},
+			uri: // RFC 3986 URI
+			function(data, schema) {
+				if(typeof data == 'string' && /^([a-z][a-z0-9+.-]*):(?:\/\/((?:(?=((?:[a-z0-9-._~!$&'()*+,;=:]|%[0-9A-F]{2})*))(\3)@)?(?=(\[[0-9A-F:.]{2,}\]|(?:[a-z0-9-._~!$&'()*+,;=]|%[0-9A-F]{2})*))\5(?::(?=(\d*))\6)?)(\/(?=((?:[a-z0-9-._~!$&'()*+,;=:@\/]|%[0-9A-F]{2})*))\8)?|(\/?(?!\/)(?=((?:[a-z0-9-._~!$&'()*+,;=:@\/]|%[0-9A-F]{2})*))\10)?)(?:\?(?=((?:[a-z0-9-._~!$&'()*+,;=:@\/?]|%[0-9A-F]{2})*))\11)?(?:#(?=((?:[a-z0-9-._~!$&'()*+,;=:@\/?]|%[0-9A-F]{2})*))\12)?$/i.test(data)) {
+					return null;
+				}
+				
+				return 'RFC 3986 URI';
+			}
+		};
+	});
+
+/**
+ * formula.js
+ * Generic JSON Schema form builder
+ *
+ * Norsk Polarinstutt 2014, http://npolar.no/
+ */
+
+angular.module('formula')
+	
+	/**
+	 * @factory i18n
+	 * 
+	 * Service used for handling Internationalization and Localization.
+	 * This service is based on the ISO 639-3 standard for language codes.
+	 * 
+	 * @returns A singleton for i18n handling
+	 */
+	
+	.factory('formulaI18n',
+	['formulaJsonLoader', 'formulaLog', '$q',
+	function(jsonLoader, log, $q) {
+		function i18n(code) {
+			if(code && i18n.cache[code]) {
+				return i18n.cache[code];
+			}
+			
+			// Fallback translation
+			return {
+				add: 		[ 'Add', 'Click to add a new item' ],
+				invalid: 	'{count} invalid fields',
+				maximize: 	[ 'Maximize', 'Click to maximize item' ],
+				minimize:	[ 'Minimize', 'Click to minimize item' ],
+				remove:		[ 'Remove', 'Click to remove item' ],
+				required:	'Required field',
+				save:		[ 'Save', 'Click to save document' ],
+				validate:	[ 'Validate', 'Click to validate form' ],
+				
+				code: null,
+				fields: {},
+				fieldsets: [],
+				uri: null
+			};
+		}
+		
+		i18n.cache = {};
+		
+		/**
+		 * @method add
+		 * 
+		 * Function used to add a new translation from JSON URI.
+		 * 
+		 * @param uri URI to JSON containing translation
+		 * @returns $q promise object resolving to ISO 639-3 code
+		 */
+		
+		i18n.add = function(uri) {
+			var deferred = $q.defer();
+			
+			if(uri) {
+				jsonLoader(uri).then(function(data) {
+					var code = data['iso639-3'];
+					
+					if(code) {
+						i18n.cache[code] = {
+							code: code,
+							fields: data.fields,
+							fieldsets: data.fieldsets,
+							uri: uri
+						};
+						
+						angular.forEach(data.labels, function(val, key) {
+							i18n.cache[code][key] = val;
+						});
+						
+						deferred.resolve(code);
+					} else {
+						log.warning(log.codes.I18N_MISSING_CODE, { uri: uri });
+					}
+				});
+			} else {
+				deferred.reject('not a valid translation JSON URI: ' + uri);
+			}
+			
+			return deferred.promise;
+		};
+		
+		/**
+		 * @method code
+		 * 
+		 * Function used to get ISO 639-3 code for a added language from URI.
+		 * This function can also be used to simply check if a language is added.
+		 * 
+		 * @param uri URI used for language code look-up
+		 * @returns ISO 639-3 code for the language if added, otherwise null
+		 */
+		
+		i18n.code = function(uri) {
+			var retCode = null;
+			
+			angular.forEach(i18n.cache, function(data, code) {
+				if(!retCode && data.uri == uri) {
+					retCode = code;
+				}
+			});
+			
+			return retCode;
+		};
+		
+		return i18n;
+	}]);
+
+/**
+ * formula.js
+ * Generic JSON Schema form builder
+ *
+ * Norsk Polarinstutt 2014, http://npolar.no/
+ */
+
+angular.module('formula')
+	
+	/**
+	 * @factory jsonLoader
+	 * 
+	 * Service used for asynchronous loading of JSON files.
+	 * 
+	 * @param uri JSON file uri as a string
+	 * @returns $q promise object to requested JSON file
+	 */
+	
+	.factory('formulaJsonLoader',
+	['$http', '$q', 'formulaLog',
+	function($http, $q, log) {
+		return function(uri, jsonp) {
+			var deferred = $q.defer();
+			
+			if(jsonp === undefined) {
+				jsonp = (uri.search(/https?:/) === 0);
+			}
+			
+			(jsonp ? $http.jsonp(uri + '?callback=JSON_CALLBACK') : $http.get(uri))
+				.success(function(data, status, headers, config) {
+					deferred.resolve(data);
+				}).error(function(data, status, headers, config) {
+					log.error(log.codes.JSON_LOAD_ERROR, { uri: uri });
+					deferred.reject(uri);
+				});
+			return deferred.promise;
+		};
+	}]);
+
+/**
+ * formula.js
+ * Generic JSON Schema form builder
+ *
+ * Norsk Polarinstutt 2014, http://npolar.no/
+ */
+
+angular.module('formula')
+	
+	/**
+	 * @factory log
+	 * 
+	 * Service used for logging debug information.
+	 * 
+	 * @returns A singleton for logging debug, warning and error messages
+	 */
+	
+	.factory('formulaLog',
+	['$log',
+	function($log) {
+		var codes = {
+			FIELD_INVALID_ID: 'field ID contains an illegal character: {character} ({field})',
+			FIELD_MISSING_PROPERTY: 'missing required field property: {property} ({field})',
+			FIELD_UNSUPPORTED_FORMAT: 'unsupported string format: {format} ({field})',
+			FIELD_UNSUPPORTED_PROPERTY: 'unsupported field property: {property} ({field})',
+			FIELD_UNSUPPORTED_TOKEN: 'unsupported default token: {token} ({field})',
+			FIELD_UNSUPPORTED_TYPE: 'unsupported field type: {type} ({field})',
+			FIELD_HIDDEN_DEFAULT: 'field hidden by default: {field}',
+			I18N_MISSING_CODE: 'missing ISO 639-3 language code: {uri}',
+			JSON_LOAD_ERROR: 'could not load JSON document: {uri}',
+			SCHEMA_INVALID_URI: 'invalid URI for schema deref: {uri}',
+			SCHEMA_MISSING_PROPERTY: 'missing required schema property: {property} ({schema})',
+			SCHEMA_MISSING_REFERENCE: 'missing schema reference: {schema}'
+		};
+		
+		function codeTranslate(code, params) {
+			var msg = code, match = msg.match(/\{[^\}]*\}/g);
+			angular.forEach(match, function(v, k) {
+				msg = msg.replace(v, params[v.substr(1, v.length - 2)]);
+			});
+			return msg;
+		}
+		
+		return {
+			codes: codes,
+			debug: function(msg, params) {
+				if(params) {
+					$log.debug(codeTranslate(msg, params));
+				} else {
+					$log.debug(msg);
+				}
+			},
+			error: function(code, params) {
+				$log.error(codeTranslate(code, params));
+			},
+			warning: function(code, params) {
+				$log.warn(codeTranslate(code, params));
+			}
+		};
+	}]);
+
+/**
+ * formula.js
+ * Generic JSON Schema form builder
+ *
+ * Norsk Polarinstutt 2014, http://npolar.no/
+ */
+
+angular.module('formula')
+	
+	/**
+	 * @factory model
+	 * 
+	 * Service used for data preservation.
+	 * 
+	 * @returns A singleton for preserving data
+	 */
+	
+	.service('formulaModel',
+	function() {
+        var model = {
+            data: {},
+            locked: false,
+            set: function(data) {
+                if(!this.locked) {
+                    this.data = data;
+					return true;
+				}
+				
+				return false;
+            }
+        };
+        
+        return model;
+	});
+
+/**
+ * formula.js
+ * Generic JSON Schema form builder
+ *
+ * Norsk Polarinstutt 2014, http://npolar.no/
+ */
+
+angular.module('formula')
+	
+	/**
+	 * @factory schema
+	 * 
+	 * Service used to create JSON Schema wrapper class instances.
+	 * 
+	 * @returns schema class constructor
+	 */
+	
+	.factory('formulaSchema',
+	['$q', 'formulaJsonLoader', 'formulaLog',
+	function($q, jsonLoader, log) {
+		/**
+		 * @class schema
+		 * 
+		 * JSON Schema wrapper class.
+		 */
+		
+		function schema(uri) {
+			this.deferred = null;
+			this.json = null;
+			this.uri = uri || null;
+		}
+		
+		schema.cache = {};
+		
+		schema.prototype = {
+			/**
+			 * @method compile
+			 * 
+			 * Function used to compile $ref's, effectively replacing the json contents.
+			 *
+			 * @returns true if all references were successfully solved, otherwise false
+			 */
+			
+			compile: function() {
+				var self = this;
+				
+				function selfDeref(path) {
+					if(path[0] == '#') {
+						path = path.substr(path[1] == '/' ? 2 : 1).split('/');
+						var schemaJson = self.json;
+						
+						angular.forEach(path, function(subpath) {
+							if(schemaJson) {
+								schemaJson = (schemaJson[subpath]);
+							}
+						});
+						
+						return schemaJson;
+					}
+					
+					return null;
+				}
+				
+				// TODO: Prevent circular refs
+				function refCompile(schemaJson, parentJson, parentKey) {
+					var missing = [], deref;
+					
+					angular.forEach(schemaJson, function(data, key) {
+						if(typeof data == 'object') {
+							missing = missing.concat(refCompile(data, schemaJson, key));
+						} else if(key == '$ref' && parentJson) {
+							if(data[0] == '#') {
+								if((deref = selfDeref(data))) {
+									parentJson[parentKey] = deref;
+								} else {
+									missing.push(data);
+									delete parentJson[parentKey];
+								}
+							} else {
+								if(schema.cache[data] && schema.cache[data].json) {
+									parentJson[parentKey] = schema.cache[data].json;
+								} else {
+									missing.push(data);
+									delete parentJson[parentKey];
+								}
+							}
+						}
+					});
+					
+					return missing;
+				}
+				
+				var missing = (this.json ? refCompile(this.json) : [ this.uri ]);
+				
+				if(missing.length) {
+					angular.forEach(missing, function(uri) {
+						log.warning(log.codes.SCHEMA_MISSING_REFERENCE, { schema: uri });
+					});
+					
+					return false;
+				}
+				
+				return true;
+			},
+			
+			/**
+			 * @method deref
+			 * 
+			 * Function used to retrieve and deref JSON Schema from URI.
+			 * 
+			 * @param uri URI to JSON Schema as string
+			 * @returns $q promise object to loaded JSON Schema
+			 */
+			
+			deref: function(uri) {
+				var self = this;
+				this.deferred = $q.defer();
+				
+				if(uri && typeof uri == 'string') {
+					if(!schema.cache[uri]) {
+						var root = {
+							schema: schema.cache[uri] = new schema(uri),
+							missing: null,
+							resolve: function(uri) {
+								if(uri && this.missing instanceof Array) {
+									var index = this.missing.indexOf(uri);
+									if(index != -1) {
+										this.missing.splice(index, 1);
+									}
+								}
+									
+								if(!this.missing || !this.missing.length) {
+									this.schema.compile();
+									self.json = this.schema.json;
+									self.deferred.resolve(self.json);
+								}
+							}
+						};
+						
+						jsonLoader(uri).then(function(data) {
+							root.schema.json = data;
+							var missing = root.schema.missing(false);
+							
+							if(missing) {
+								root.missing = angular.copy(missing);
+								angular.forEach(missing, function(uri) {
+									if(!schema.cache[uri]) {
+										var ref = new schema();
+										ref.deref(uri).then(function() {
+											root.resolve(uri);
+										});
+									} else {
+										schema.cache[uri].then(function() {
+											root.resolve(uri);
+										});
+									}
+								});
+							} else {
+								root.resolve();
+							}
+						}, function(error) {
+							self.deferred.reject(error);
+						});
+					} else {
+						schema.cache[uri].then(function(data) {
+							self.json = data;
+							self.deferred.resolve(data);
+						});
+					}
+				} else {
+					log.warning(log.codes.SCHEMA_INVALID_URI, { uri: uri });
+					this.deferred.reject('Invalid schema URI: ' + uri);
+				}
+				
+				return this;
+			},
+			
+			/**
+			 * @method missing
+			 * 
+			 * Function used to find all $ref URIs in schema.
+			 * Optionally only return non-cached $ref URIs.
+			 * 
+			 * @param ignoreCached Only return non-chached $ref URIs if true
+			 * @returns An array of uncompiled $ref URIs or null if empty
+			 */
+			
+			missing: function(ignoreCached) {
+				function refArray(json) {
+					var refs = [];
+					angular.forEach(json, function(data, key) {
+						if(typeof data == 'object') {
+							var subRefs = refArray(data);
+							angular.forEach(subRefs, function(ref) {
+								refs.push(ref);
+							});
+						} else if(key == '$ref' && data[0] != '#') {
+							if(!ignoreCached || !schema.cache[data]) {
+								refs.push(data);
+							}
+						}
+					});
+					return refs;
+				}
+				
+				var refs = refArray(this.json);
+				return refs.length ? refs : null;
+			},
+			
+			/**
+			 * @method then
+			 * 
+			 * Function running a callback-function when schema is successfully compiled.
+			 * 
+			 * @param callback Callback function with one parameter for JSON data
+			 */
+			
+			then: function(callback) {
+				if(this.deferred) {
+					this.deferred.promise.then(function(data) {
+						callback(data);
+					}, function(error) {
+						// TODO: Failed schema promise
+					});
+				} else {
+					callback(this.json);
+				}
+			}
+		};
+		
+		return schema;
+	}]);
+
+angular.module("formula").run(["$templateCache", function($templateCache) {$templateCache.put("formula/bootstrap3.html","<form class=\"form-horizontal\" ng-if=\"form.fieldsets\"><header ng-if=\"form.title\" class=\"page-header\" style=\"margin-top: -10px\"><h2>{{ form.title }}</h2></header><ul class=\"nav nav-tabs\"><li ng-repeat=\"fieldset in form.fieldsets\" ng-if=\"form.fieldsets.length > 1\" ng-class=\"{ active: fieldset.active }\"><a href=\"\" ng-click=\"form.activate(fieldset)\">{{ fieldset.title }}</a></li></ul><fieldset ng-repeat=\"fieldset in form.fieldsets\" ng-if=\"fieldset.active\" style=\"border: 1px solid #ddd; border-radius: 0 0 5px 5px; border-top: 0; padding: 15px; padding-bottom: 0;\"><div ng-repeat=\"field in fieldset.fields\" ng-show=\"field.visible\" formula:field-definition=\"\"><div ng-if=\"field.typeOf(\'input\')\" title=\"{{ field.description }}\" class=\"form-group has-feedback\"><label for=\"{{ field.uid }}\" class=\"col-sm-3 control-label\">{{ field.title }}</label><div class=\"col-sm-9\" ng-class=\"{ \'has-error\': field.error, \'has-success\': field.valid, \'has-warning\': (field.required && field.value === null) }\"><div ng-if=\"!field.typeOf(\'select\')\"><input class=\"form-control input-md\" formula:field=\"field\"><div ng-if=\"!field.typeOf(\'checkbox\') && (field.error || field.valid)\"><span ng-if=\"field.valid\" class=\"glyphicon glyphicon-ok form-control-feedback\"></span> <span ng-if=\"field.error\" class=\"glyphicon glyphicon-remove form-control-feedback\"></span></div></div><select ng-if=\"field.typeOf(\'select\')\" class=\"form-control input-md\" formula:field=\"field\"><option ng-repeat=\"value in field.values\" value=\"{{ value.id }}\">{{ value.label }}</option></select><span class=\"help-block\">{{ field.error || field.description }}</span></div></div><div ng-if=\"field.typeOf(\'object\')\"><div class=\"panel\" ng-class=\"{ \'panel-danger\': field.error, \'panel-success\': field.valid }\" formula:field=\"field\"><div class=\"panel-heading\">{{ field.title }}</div><div class=\"panel-body\"><div ng-repeat=\"field in field.fields\" ng-show=\"field.visible\"><formula:field-instance field=\"field\"></formula:field-instance></div></div></div></div><div ng-if=\"field.typeOf(\'array\')\"><div formula:field=\"field\"><div ng-if=\"field.typeOf(\'fieldset\')\" class=\"panel\" ng-class=\"{ \'panel-danger\': field.error, \'panel-success\': field.valid }\"><div class=\"panel-heading\">{{ field.title }} ({{ field.values.length || 0 }})</div><ul class=\"list-group\"><li class=\"list-group-item\" ng-repeat=\"value in field.values\"><fieldset><legend style=\"border: none; margin-bottom: 10px; text-align: right;\"><span ng-class=\"{ \'text-danger\': !value.valid, \'text-success\': value.valid }\" class=\"pull-left\" ng-if=\"!value.visible\">{{ value.fields | formulaInlineValues }}</span> <button style=\"font-family: monospace;\" class=\"btn btn-sm btn-info\" ng-click=\"field.itemToggle($index)\" type=\"button\" title=\"{{ value.visible ? form.i18n.minimize[1] : form.i18n.maximize[1] }}\">{{ value.visible ? \'_\' : \'‾\' }}</button> <button class=\"btn btn-sm btn-danger\" ng-click=\"field.itemRemove($index)\" type=\"button\" title=\"{{ form.i18n.remove[1] }}\">X</button></legend><div ng-repeat=\"subfield in field.fields\" ng-show=\"value.visible\"><formula:field-instance field=\"value.fields[$index]\" ng-show=\"subfield.visible\"></formula:field-instance></div></fieldset></li></ul><div class=\"panel-footer clearfix has-feedback\" ng-class=\"{ \'has-error\': field.error, \'has-success\': field.valid }\"><span class=\"help-block\"><span>{{ field.error || field.description }}</span> <button class=\"btn btn-sm btn-primary pull-right\" ng-click=\"field.itemAdd()\" type=\"button\" title=\"{{ form.i18n.add[1] }}\">{{ form.i18n.add[0] }}</button></span></div></div><div ng-if=\"field.typeOf(\'field\')\" class=\"panel\" ng-class=\"{ \'panel-danger\': field.error, \'panel-success\': field.valid }\"><div class=\"panel-heading\">{{ field.title }}</div><ul class=\"list-group\"><li class=\"list-group-item\" ng-repeat=\"value in field.values\"><div class=\"input-group\"><input formula:field=\"value\" class=\"form-control input-md\"> <span class=\"input-group-btn\"><button class=\"btn btn-danger\" ng-click=\"field.itemRemove($index)\" type=\"button\" title=\"{{ form.i18n.remove[1] }}\">X</button></span></div></li></ul><div class=\"panel-footer clearfix has-feedback\" ng-class=\"{ \'has-error\': field.error, \'has-success\': field.valid }\"><span class=\"help-block\"><span>{{ field.error || field.description }}</span> <button class=\"btn btn-sm btn-primary pull-right\" ng-click=\"field.itemAdd()\" type=\"button\" title=\"{{ form.i18n.add[1] }}\">{{ form.i18n.add[0] }}</button></span></div></div></div></div></div></fieldset><div class=\"has-feedback\" ng-class=\"{ \'has-error\': !form.valid, \'has-success\': form.valid }\" style=\"margin-top: 10px;\"><span class=\"help-block\"><span ng-if=\"form.errors\" title=\"{{ form.errors.join(\'\\n\') }}\">{{ form.i18n.invalid | formulaReplace : { count: form.errors.length } }}</span><div class=\"btn-group pull-right\"><button ng-if=\"!form.uiValidateHidden\" type=\"button\" class=\"btn btn-info\" ng-click=\"form.validate()\" title=\"{{ form.i18n.validate[1] }}\">{{ form.i18n.validate[0] }}</button> <button ng-if=\"!form.uiSaveHidden\" type=\"button\" class=\"btn btn-success\" ng-class=\"{ disabled: !form.valid }\" ng-click=\"form.save()\" title=\"{{ form.i18n.save[1] }}\">{{ form.i18n.save[0] }}</button></div></span></div></form><div ng-if=\"!form.fieldsets\" class=\"alert alert-info\" style=\"text-align: center; overflow: hidden;\"><span>Loading schema...</span></div>");
+$templateCache.put("formula/default.html","<form class=\"formula\" ng-if=\"form.fieldsets\"><header ng-if=\"form.title\">{{ form.title }}</header><nav ng-if=\"form.fieldsets.length > 1\"><a ng-repeat=\"fieldset in form.fieldsets\" ng-class=\"{ active: fieldset.active }\" href=\"\" ng-click=\"form.activate(fieldset)\">{{ fieldset.title }}</a></nav><fieldset ng-repeat=\"fieldset in form.fieldsets\" ng-if=\"fieldset.active\"><legend ng-if=\"fieldset.title\">{{ fieldset.title }}</legend><div ng-repeat=\"field in fieldset.fields\" ng-show=\"field.visible\" formula:field-definition=\"\"><div ng-if=\"field.typeOf(\'input\')\" title=\"{{ field.description }}\" ng-class=\"{ valid: field.valid, error: field.error, required: (field.required && field.value === null) }\"><label for=\"{{ field.uid }}\">{{ field.title }}</label> <input formula:field=\"field\"> <span>{{ field.error || field.description }}</span></div><div ng-if=\"field.typeOf(\'object\')\"><fieldset formula:field=\"field\"><legend>{{ field.title }}</legend><div ng-repeat=\"field in field.fields\" ng-show=\"field.visible\"><formula:field-instance field=\"field\"></formula:field-instance></div></fieldset></div><div ng-if=\"field.typeOf(\'array\')\"><div formula:field=\"field\"><fieldset ng-class=\"{ valid: field.valid, error: field.error }\"><legend>{{ field.title }} ({{ field.values.length || 0 }})</legend><ul ng-if=\"field.typeOf(\'fieldset\')\"><li ng-repeat=\"value in field.values\"><fieldset ng-class=\"{ valid: value.valid }\"><legend><span ng-if=\"!value.visible\">{{ value.fields | formulaInlineValues }}</span> <a href=\"\" class=\"toggle\" ng-click=\"field.itemToggle($index)\" title=\"{{ value.visible ? form.i18n.minimize[1] : form.i18n.maximize[1] }}\">{{ value.visible ? \'_\' : \'‾\' }}</a> <a href=\"\" class=\"remove\" ng-click=\"field.itemRemove($index)\" title=\"{{ form.i18n.remove[1] }}\">X</a></legend><div ng-repeat=\"subfield in field.fields\" ng-show=\"value.visible\"><formula:field-instance field=\"value.fields[$index]\" ng-show=\"subfield.visible\"></formula:field-instance></div></fieldset></li><li><span>{{ field.error || field.description }}</span> <button class=\"add\" ng-click=\"field.itemAdd()\" type=\"button\" title=\"{{ form.i18n.add[1] }}\"><strong>+</strong> {{ form.i18n.add[0] }}</button></li></ul><ul ng-if=\"field.typeOf(\'field\')\"><li ng-repeat=\"value in field.values\" ng-class=\"{ valid: value.valid, error: value.error }\"><input formula:field=\"value\"> <a href=\"\" class=\"remove\" ng-click=\"field.itemRemove($index)\" title=\"{{ form.i18n.remove[1] }}\">X</a> <span ng-if=\"value.error\">{{ value.error }}</span></li><li><span>{{ field.error || field.description }}</span> <button class=\"add\" ng-click=\"field.itemAdd()\" type=\"button\" title=\"{{ form.i18n.add[1] }}\"><strong>+</strong> {{ form.i18n.add[0] }}</button></li></ul></fieldset></div></div></div></fieldset><footer><span ng-if=\"form.errors\" title=\"{{ form.errors.join(\'\\n\') }}\">{{ form.i18n.invalid | formulaReplace : { count: form.errors.length } }}</span> <button ng-if=\"!form.uiValidateHidden\" ng-click=\"form.validate()\" title=\"{{ form.i18n.validate[1] }}\"><strong>&#10003;</strong> {{ form.i18n.validate[0] }}</button> <button ng-if=\"!form.uiSaveHidden\" ng-disabled=\"!form.valid\" ng-click=\"form.save()\" title=\"{{ form.i18n.save[1] }}\"><strong>&#9921;</strong> {{ form.i18n.save[0] }}</button></footer></form><div class=\"formula\" ng-if=\"!form.fieldsets\"><div class=\"loading\"><div class=\"spinner\"></div><span>Loading...</span></div></div>");}]);;
+},{"angular":24,"tv4":28}],26:[function(require,module,exports){
+"use strict";
+/**
+ * @ngInject
+ */
+var AutoConfig = function(environment) {
+  this.environment = environment;
+
+  var isTest = function(hostname) {
+    return (/test/.test(hostname.split(".")[0]));
+  };
+
+  var detectEnvironment = function(hostname) {
+    var environment;
+    if ("localhost" === hostname) {
+      environment = "development";
+    } else if (isTest(hostname)) {
+      environment = "test";
+    } else if ("data.npolar.no" === hostname) {
+      environment = "production";
+    }
+    return environment;
+  };
+
+  var base = function(environment) {
+    var base;
+    if ("development" === environment) {
+      base = "//localhost:9393";
+    } else if ("test" === environment) {
+      base = "//apptest.data.npolar.no";
+    } else if ("production" === environment || undefined === environment || null === environment) {
+      base = "//api.npolar.no";
+    } else {
+      throw "Unknown environment";
+    }
+    return base;
+  };
+
+
+  // Auto-detect environment - only allow overriding on localhost
+  if ("localhost" === window.location.hostname && (typeof this.environment === 'string' || this.environment instanceof String)) {
+    console.warn("Environment:", this.environment, "[localhost override]");
+  } else {
+    this.environment = detectEnvironment(window.location.hostname);
+    console.log("Environment:", this.environment, "[auto-detected]");
+  }
+
+  this.base = base(this.environment);
+
+  if ("production" === this.environment) {
+    if ("https:" !== window.location.protocol) {
+      console.warn("WARNING", "Not using HTTPS in production environment");
+    }
+    if ("data.npolar.no" !== window.location.hostname) {
+      console.warn("WARNING", "Running against production API", this.base, "from", window.location.href);
+    }
+  }
+  return this;
+
+};
+
+module.exports = AutoConfig;
+
+},{}],27:[function(require,module,exports){
+'use strict';
+
+module.exports = {
+  AutoConfig: require('./config/AutoConfig')
+};
+
+},{"./config/AutoConfig":26}],28:[function(require,module,exports){
+/*
+Author: Geraint Luff and others
+Year: 2013
+
+This code is released into the "public domain" by its author(s).  Anybody may use, alter and distribute the code without restriction.  The author makes no guarantees, and takes no liability of any kind for use of this code.
+
+If you find a bug or make an improvement, it would be courteous to let the author know, but it is not compulsory.
+*/
+(function (global, factory) {
+  if (typeof define === 'function' && define.amd) {
+    // AMD. Register as an anonymous module.
+    define([], factory);
+  } else if (typeof module !== 'undefined' && module.exports){
+    // CommonJS. Define export.
+    module.exports = factory();
+  } else {
+    // Browser globals
+    global.tv4 = factory();
+  }
+}(this, function () {
+
+// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/keys?redirectlocale=en-US&redirectslug=JavaScript%2FReference%2FGlobal_Objects%2FObject%2Fkeys
+if (!Object.keys) {
+	Object.keys = (function () {
+		var hasOwnProperty = Object.prototype.hasOwnProperty,
+			hasDontEnumBug = !({toString: null}).propertyIsEnumerable('toString'),
+			dontEnums = [
+				'toString',
+				'toLocaleString',
+				'valueOf',
+				'hasOwnProperty',
+				'isPrototypeOf',
+				'propertyIsEnumerable',
+				'constructor'
+			],
+			dontEnumsLength = dontEnums.length;
+
+		return function (obj) {
+			if (typeof obj !== 'object' && typeof obj !== 'function' || obj === null) {
+				throw new TypeError('Object.keys called on non-object');
+			}
+
+			var result = [];
+
+			for (var prop in obj) {
+				if (hasOwnProperty.call(obj, prop)) {
+					result.push(prop);
+				}
+			}
+
+			if (hasDontEnumBug) {
+				for (var i=0; i < dontEnumsLength; i++) {
+					if (hasOwnProperty.call(obj, dontEnums[i])) {
+						result.push(dontEnums[i]);
+					}
+				}
+			}
+			return result;
+		};
+	})();
+}
+// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/create
+if (!Object.create) {
+	Object.create = (function(){
+		function F(){}
+
+		return function(o){
+			if (arguments.length !== 1) {
+				throw new Error('Object.create implementation only accepts one parameter.');
+			}
+			F.prototype = o;
+			return new F();
+		};
+	})();
+}
+// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/isArray?redirectlocale=en-US&redirectslug=JavaScript%2FReference%2FGlobal_Objects%2FArray%2FisArray
+if(!Array.isArray) {
+	Array.isArray = function (vArg) {
+		return Object.prototype.toString.call(vArg) === "[object Array]";
+	};
+}
+// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/indexOf?redirectlocale=en-US&redirectslug=JavaScript%2FReference%2FGlobal_Objects%2FArray%2FindexOf
+if (!Array.prototype.indexOf) {
+	Array.prototype.indexOf = function (searchElement /*, fromIndex */ ) {
+		if (this === null) {
+			throw new TypeError();
+		}
+		var t = Object(this);
+		var len = t.length >>> 0;
+
+		if (len === 0) {
+			return -1;
+		}
+		var n = 0;
+		if (arguments.length > 1) {
+			n = Number(arguments[1]);
+			if (n !== n) { // shortcut for verifying if it's NaN
+				n = 0;
+			} else if (n !== 0 && n !== Infinity && n !== -Infinity) {
+				n = (n > 0 || -1) * Math.floor(Math.abs(n));
+			}
+		}
+		if (n >= len) {
+			return -1;
+		}
+		var k = n >= 0 ? n : Math.max(len - Math.abs(n), 0);
+		for (; k < len; k++) {
+			if (k in t && t[k] === searchElement) {
+				return k;
+			}
+		}
+		return -1;
+	};
+}
+
+// Grungey Object.isFrozen hack
+if (!Object.isFrozen) {
+	Object.isFrozen = function (obj) {
+		var key = "tv4_test_frozen_key";
+		while (obj.hasOwnProperty(key)) {
+			key += Math.random();
+		}
+		try {
+			obj[key] = true;
+			delete obj[key];
+			return false;
+		} catch (e) {
+			return true;
+		}
+	};
+}
+// Based on: https://github.com/geraintluff/uri-templates, but with all the de-substitution stuff removed
+
+var uriTemplateGlobalModifiers = {
+	"+": true,
+	"#": true,
+	".": true,
+	"/": true,
+	";": true,
+	"?": true,
+	"&": true
+};
+var uriTemplateSuffices = {
+	"*": true
+};
+
+function notReallyPercentEncode(string) {
+	return encodeURI(string).replace(/%25[0-9][0-9]/g, function (doubleEncoded) {
+		return "%" + doubleEncoded.substring(3);
+	});
+}
+
+function uriTemplateSubstitution(spec) {
+	var modifier = "";
+	if (uriTemplateGlobalModifiers[spec.charAt(0)]) {
+		modifier = spec.charAt(0);
+		spec = spec.substring(1);
+	}
+	var separator = "";
+	var prefix = "";
+	var shouldEscape = true;
+	var showVariables = false;
+	var trimEmptyString = false;
+	if (modifier === '+') {
+		shouldEscape = false;
+	} else if (modifier === ".") {
+		prefix = ".";
+		separator = ".";
+	} else if (modifier === "/") {
+		prefix = "/";
+		separator = "/";
+	} else if (modifier === '#') {
+		prefix = "#";
+		shouldEscape = false;
+	} else if (modifier === ';') {
+		prefix = ";";
+		separator = ";";
+		showVariables = true;
+		trimEmptyString = true;
+	} else if (modifier === '?') {
+		prefix = "?";
+		separator = "&";
+		showVariables = true;
+	} else if (modifier === '&') {
+		prefix = "&";
+		separator = "&";
+		showVariables = true;
+	}
+
+	var varNames = [];
+	var varList = spec.split(",");
+	var varSpecs = [];
+	var varSpecMap = {};
+	for (var i = 0; i < varList.length; i++) {
+		var varName = varList[i];
+		var truncate = null;
+		if (varName.indexOf(":") !== -1) {
+			var parts = varName.split(":");
+			varName = parts[0];
+			truncate = parseInt(parts[1], 10);
+		}
+		var suffices = {};
+		while (uriTemplateSuffices[varName.charAt(varName.length - 1)]) {
+			suffices[varName.charAt(varName.length - 1)] = true;
+			varName = varName.substring(0, varName.length - 1);
+		}
+		var varSpec = {
+			truncate: truncate,
+			name: varName,
+			suffices: suffices
+		};
+		varSpecs.push(varSpec);
+		varSpecMap[varName] = varSpec;
+		varNames.push(varName);
+	}
+	var subFunction = function (valueFunction) {
+		var result = "";
+		var startIndex = 0;
+		for (var i = 0; i < varSpecs.length; i++) {
+			var varSpec = varSpecs[i];
+			var value = valueFunction(varSpec.name);
+			if (value === null || value === undefined || (Array.isArray(value) && value.length === 0) || (typeof value === 'object' && Object.keys(value).length === 0)) {
+				startIndex++;
+				continue;
+			}
+			if (i === startIndex) {
+				result += prefix;
+			} else {
+				result += (separator || ",");
+			}
+			if (Array.isArray(value)) {
+				if (showVariables) {
+					result += varSpec.name + "=";
+				}
+				for (var j = 0; j < value.length; j++) {
+					if (j > 0) {
+						result += varSpec.suffices['*'] ? (separator || ",") : ",";
+						if (varSpec.suffices['*'] && showVariables) {
+							result += varSpec.name + "=";
+						}
+					}
+					result += shouldEscape ? encodeURIComponent(value[j]).replace(/!/g, "%21") : notReallyPercentEncode(value[j]);
+				}
+			} else if (typeof value === "object") {
+				if (showVariables && !varSpec.suffices['*']) {
+					result += varSpec.name + "=";
+				}
+				var first = true;
+				for (var key in value) {
+					if (!first) {
+						result += varSpec.suffices['*'] ? (separator || ",") : ",";
+					}
+					first = false;
+					result += shouldEscape ? encodeURIComponent(key).replace(/!/g, "%21") : notReallyPercentEncode(key);
+					result += varSpec.suffices['*'] ? '=' : ",";
+					result += shouldEscape ? encodeURIComponent(value[key]).replace(/!/g, "%21") : notReallyPercentEncode(value[key]);
+				}
+			} else {
+				if (showVariables) {
+					result += varSpec.name;
+					if (!trimEmptyString || value !== "") {
+						result += "=";
+					}
+				}
+				if (varSpec.truncate != null) {
+					value = value.substring(0, varSpec.truncate);
+				}
+				result += shouldEscape ? encodeURIComponent(value).replace(/!/g, "%21"): notReallyPercentEncode(value);
+			}
+		}
+		return result;
+	};
+	subFunction.varNames = varNames;
+	return {
+		prefix: prefix,
+		substitution: subFunction
+	};
+}
+
+function UriTemplate(template) {
+	if (!(this instanceof UriTemplate)) {
+		return new UriTemplate(template);
+	}
+	var parts = template.split("{");
+	var textParts = [parts.shift()];
+	var prefixes = [];
+	var substitutions = [];
+	var varNames = [];
+	while (parts.length > 0) {
+		var part = parts.shift();
+		var spec = part.split("}")[0];
+		var remainder = part.substring(spec.length + 1);
+		var funcs = uriTemplateSubstitution(spec);
+		substitutions.push(funcs.substitution);
+		prefixes.push(funcs.prefix);
+		textParts.push(remainder);
+		varNames = varNames.concat(funcs.substitution.varNames);
+	}
+	this.fill = function (valueFunction) {
+		var result = textParts[0];
+		for (var i = 0; i < substitutions.length; i++) {
+			var substitution = substitutions[i];
+			result += substitution(valueFunction);
+			result += textParts[i + 1];
+		}
+		return result;
+	};
+	this.varNames = varNames;
+	this.template = template;
+}
+UriTemplate.prototype = {
+	toString: function () {
+		return this.template;
+	},
+	fillFromObject: function (obj) {
+		return this.fill(function (varName) {
+			return obj[varName];
+		});
+	}
+};
+var ValidatorContext = function ValidatorContext(parent, collectMultiple, errorMessages, checkRecursive, trackUnknownProperties) {
+	this.missing = [];
+	this.missingMap = {};
+	this.formatValidators = parent ? Object.create(parent.formatValidators) : {};
+	this.schemas = parent ? Object.create(parent.schemas) : {};
+	this.collectMultiple = collectMultiple;
+	this.errors = [];
+	this.handleError = collectMultiple ? this.collectError : this.returnError;
+	if (checkRecursive) {
+		this.checkRecursive = true;
+		this.scanned = [];
+		this.scannedFrozen = [];
+		this.scannedFrozenSchemas = [];
+		this.scannedFrozenValidationErrors = [];
+		this.validatedSchemasKey = 'tv4_validation_id';
+		this.validationErrorsKey = 'tv4_validation_errors_id';
+	}
+	if (trackUnknownProperties) {
+		this.trackUnknownProperties = true;
+		this.knownPropertyPaths = {};
+		this.unknownPropertyPaths = {};
+	}
+	this.errorMessages = errorMessages;
+	this.definedKeywords = {};
+	if (parent) {
+		for (var key in parent.definedKeywords) {
+			this.definedKeywords[key] = parent.definedKeywords[key].slice(0);
+		}
+	}
+};
+ValidatorContext.prototype.defineKeyword = function (keyword, keywordFunction) {
+	this.definedKeywords[keyword] = this.definedKeywords[keyword] || [];
+	this.definedKeywords[keyword].push(keywordFunction);
+};
+ValidatorContext.prototype.createError = function (code, messageParams, dataPath, schemaPath, subErrors) {
+	var messageTemplate = this.errorMessages[code] || ErrorMessagesDefault[code];
+	if (typeof messageTemplate !== 'string') {
+		return new ValidationError(code, "Unknown error code " + code + ": " + JSON.stringify(messageParams), messageParams, dataPath, schemaPath, subErrors);
+	}
+	// Adapted from Crockford's supplant()
+	var message = messageTemplate.replace(/\{([^{}]*)\}/g, function (whole, varName) {
+		var subValue = messageParams[varName];
+		return typeof subValue === 'string' || typeof subValue === 'number' ? subValue : whole;
+	});
+	return new ValidationError(code, message, messageParams, dataPath, schemaPath, subErrors);
+};
+ValidatorContext.prototype.returnError = function (error) {
+	return error;
+};
+ValidatorContext.prototype.collectError = function (error) {
+	if (error) {
+		this.errors.push(error);
+	}
+	return null;
+};
+ValidatorContext.prototype.prefixErrors = function (startIndex, dataPath, schemaPath) {
+	for (var i = startIndex; i < this.errors.length; i++) {
+		this.errors[i] = this.errors[i].prefixWith(dataPath, schemaPath);
+	}
+	return this;
+};
+ValidatorContext.prototype.banUnknownProperties = function () {
+	for (var unknownPath in this.unknownPropertyPaths) {
+		var error = this.createError(ErrorCodes.UNKNOWN_PROPERTY, {path: unknownPath}, unknownPath, "");
+		var result = this.handleError(error);
+		if (result) {
+			return result;
+		}
+	}
+	return null;
+};
+
+ValidatorContext.prototype.addFormat = function (format, validator) {
+	if (typeof format === 'object') {
+		for (var key in format) {
+			this.addFormat(key, format[key]);
+		}
+		return this;
+	}
+	this.formatValidators[format] = validator;
+};
+ValidatorContext.prototype.resolveRefs = function (schema, urlHistory) {
+	if (schema['$ref'] !== undefined) {
+		urlHistory = urlHistory || {};
+		if (urlHistory[schema['$ref']]) {
+			return this.createError(ErrorCodes.CIRCULAR_REFERENCE, {urls: Object.keys(urlHistory).join(', ')}, '', '');
+		}
+		urlHistory[schema['$ref']] = true;
+		schema = this.getSchema(schema['$ref'], urlHistory);
+	}
+	return schema;
+};
+ValidatorContext.prototype.getSchema = function (url, urlHistory) {
+	var schema;
+	if (this.schemas[url] !== undefined) {
+		schema = this.schemas[url];
+		return this.resolveRefs(schema, urlHistory);
+	}
+	var baseUrl = url;
+	var fragment = "";
+	if (url.indexOf('#') !== -1) {
+		fragment = url.substring(url.indexOf("#") + 1);
+		baseUrl = url.substring(0, url.indexOf("#"));
+	}
+	if (typeof this.schemas[baseUrl] === 'object') {
+		schema = this.schemas[baseUrl];
+		var pointerPath = decodeURIComponent(fragment);
+		if (pointerPath === "") {
+			return this.resolveRefs(schema, urlHistory);
+		} else if (pointerPath.charAt(0) !== "/") {
+			return undefined;
+		}
+		var parts = pointerPath.split("/").slice(1);
+		for (var i = 0; i < parts.length; i++) {
+			var component = parts[i].replace(/~1/g, "/").replace(/~0/g, "~");
+			if (schema[component] === undefined) {
+				schema = undefined;
+				break;
+			}
+			schema = schema[component];
+		}
+		if (schema !== undefined) {
+			return this.resolveRefs(schema, urlHistory);
+		}
+	}
+	if (this.missing[baseUrl] === undefined) {
+		this.missing.push(baseUrl);
+		this.missing[baseUrl] = baseUrl;
+		this.missingMap[baseUrl] = baseUrl;
+	}
+};
+ValidatorContext.prototype.searchSchemas = function (schema, url) {
+	if (Array.isArray(schema)) {
+		for (var i = 0; i < schema.length; i++) {
+			this.searchSchemas(schema[i], url);
+		}
+	} else if (schema && typeof schema === "object") {
+		if (typeof schema.id === "string") {
+			if (isTrustedUrl(url, schema.id)) {
+				if (this.schemas[schema.id] === undefined) {
+					this.schemas[schema.id] = schema;
+				}
+			}
+		}
+		for (var key in schema) {
+			if (key !== "enum") {
+				if (typeof schema[key] === "object") {
+					this.searchSchemas(schema[key], url);
+				} else if (key === "$ref") {
+					var uri = getDocumentUri(schema[key]);
+					if (uri && this.schemas[uri] === undefined && this.missingMap[uri] === undefined) {
+						this.missingMap[uri] = uri;
+					}
+				}
+			}
+		}
+	}
+};
+ValidatorContext.prototype.addSchema = function (url, schema) {
+	//overload
+	if (typeof url !== 'string' || typeof schema === 'undefined') {
+		if (typeof url === 'object' && typeof url.id === 'string') {
+			schema = url;
+			url = schema.id;
+		}
+		else {
+			return;
+		}
+	}
+	if (url === getDocumentUri(url) + "#") {
+		// Remove empty fragment
+		url = getDocumentUri(url);
+	}
+	this.schemas[url] = schema;
+	delete this.missingMap[url];
+	normSchema(schema, url);
+	this.searchSchemas(schema, url);
+};
+
+ValidatorContext.prototype.getSchemaMap = function () {
+	var map = {};
+	for (var key in this.schemas) {
+		map[key] = this.schemas[key];
+	}
+	return map;
+};
+
+ValidatorContext.prototype.getSchemaUris = function (filterRegExp) {
+	var list = [];
+	for (var key in this.schemas) {
+		if (!filterRegExp || filterRegExp.test(key)) {
+			list.push(key);
+		}
+	}
+	return list;
+};
+
+ValidatorContext.prototype.getMissingUris = function (filterRegExp) {
+	var list = [];
+	for (var key in this.missingMap) {
+		if (!filterRegExp || filterRegExp.test(key)) {
+			list.push(key);
+		}
+	}
+	return list;
+};
+
+ValidatorContext.prototype.dropSchemas = function () {
+	this.schemas = {};
+	this.reset();
+};
+ValidatorContext.prototype.reset = function () {
+	this.missing = [];
+	this.missingMap = {};
+	this.errors = [];
+};
+
+ValidatorContext.prototype.validateAll = function (data, schema, dataPathParts, schemaPathParts, dataPointerPath) {
+	var topLevel;
+	schema = this.resolveRefs(schema);
+	if (!schema) {
+		return null;
+	} else if (schema instanceof ValidationError) {
+		this.errors.push(schema);
+		return schema;
+	}
+
+	var startErrorCount = this.errors.length;
+	var frozenIndex, scannedFrozenSchemaIndex = null, scannedSchemasIndex = null;
+	if (this.checkRecursive && data && typeof data === 'object') {
+		topLevel = !this.scanned.length;
+		if (data[this.validatedSchemasKey]) {
+			var schemaIndex = data[this.validatedSchemasKey].indexOf(schema);
+			if (schemaIndex !== -1) {
+				this.errors = this.errors.concat(data[this.validationErrorsKey][schemaIndex]);
+				return null;
+			}
+		}
+		if (Object.isFrozen(data)) {
+			frozenIndex = this.scannedFrozen.indexOf(data);
+			if (frozenIndex !== -1) {
+				var frozenSchemaIndex = this.scannedFrozenSchemas[frozenIndex].indexOf(schema);
+				if (frozenSchemaIndex !== -1) {
+					this.errors = this.errors.concat(this.scannedFrozenValidationErrors[frozenIndex][frozenSchemaIndex]);
+					return null;
+				}
+			}
+		}
+		this.scanned.push(data);
+		if (Object.isFrozen(data)) {
+			if (frozenIndex === -1) {
+				frozenIndex = this.scannedFrozen.length;
+				this.scannedFrozen.push(data);
+				this.scannedFrozenSchemas.push([]);
+			}
+			scannedFrozenSchemaIndex = this.scannedFrozenSchemas[frozenIndex].length;
+			this.scannedFrozenSchemas[frozenIndex][scannedFrozenSchemaIndex] = schema;
+			this.scannedFrozenValidationErrors[frozenIndex][scannedFrozenSchemaIndex] = [];
+		} else {
+			if (!data[this.validatedSchemasKey]) {
+				try {
+					Object.defineProperty(data, this.validatedSchemasKey, {
+						value: [],
+						configurable: true
+					});
+					Object.defineProperty(data, this.validationErrorsKey, {
+						value: [],
+						configurable: true
+					});
+				} catch (e) {
+					//IE 7/8 workaround
+					data[this.validatedSchemasKey] = [];
+					data[this.validationErrorsKey] = [];
+				}
+			}
+			scannedSchemasIndex = data[this.validatedSchemasKey].length;
+			data[this.validatedSchemasKey][scannedSchemasIndex] = schema;
+			data[this.validationErrorsKey][scannedSchemasIndex] = [];
+		}
+	}
+
+	var errorCount = this.errors.length;
+	var error = this.validateBasic(data, schema, dataPointerPath)
+		|| this.validateNumeric(data, schema, dataPointerPath)
+		|| this.validateString(data, schema, dataPointerPath)
+		|| this.validateArray(data, schema, dataPointerPath)
+		|| this.validateObject(data, schema, dataPointerPath)
+		|| this.validateCombinations(data, schema, dataPointerPath)
+		|| this.validateHypermedia(data, schema, dataPointerPath)
+		|| this.validateFormat(data, schema, dataPointerPath)
+		|| this.validateDefinedKeywords(data, schema, dataPointerPath)
+		|| null;
+
+	if (topLevel) {
+		while (this.scanned.length) {
+			var item = this.scanned.pop();
+			delete item[this.validatedSchemasKey];
+		}
+		this.scannedFrozen = [];
+		this.scannedFrozenSchemas = [];
+	}
+
+	if (error || errorCount !== this.errors.length) {
+		while ((dataPathParts && dataPathParts.length) || (schemaPathParts && schemaPathParts.length)) {
+			var dataPart = (dataPathParts && dataPathParts.length) ? "" + dataPathParts.pop() : null;
+			var schemaPart = (schemaPathParts && schemaPathParts.length) ? "" + schemaPathParts.pop() : null;
+			if (error) {
+				error = error.prefixWith(dataPart, schemaPart);
+			}
+			this.prefixErrors(errorCount, dataPart, schemaPart);
+		}
+	}
+
+	if (scannedFrozenSchemaIndex !== null) {
+		this.scannedFrozenValidationErrors[frozenIndex][scannedFrozenSchemaIndex] = this.errors.slice(startErrorCount);
+	} else if (scannedSchemasIndex !== null) {
+		data[this.validationErrorsKey][scannedSchemasIndex] = this.errors.slice(startErrorCount);
+	}
+
+	return this.handleError(error);
+};
+ValidatorContext.prototype.validateFormat = function (data, schema) {
+	if (typeof schema.format !== 'string' || !this.formatValidators[schema.format]) {
+		return null;
+	}
+	var errorMessage = this.formatValidators[schema.format].call(null, data, schema);
+	if (typeof errorMessage === 'string' || typeof errorMessage === 'number') {
+		return this.createError(ErrorCodes.FORMAT_CUSTOM, {message: errorMessage}).prefixWith(null, "format");
+	} else if (errorMessage && typeof errorMessage === 'object') {
+		return this.createError(ErrorCodes.FORMAT_CUSTOM, {message: errorMessage.message || "?"}, errorMessage.dataPath || null, errorMessage.schemaPath || "/format");
+	}
+	return null;
+};
+ValidatorContext.prototype.validateDefinedKeywords = function (data, schema, dataPointerPath) {
+	for (var key in this.definedKeywords) {
+		if (typeof schema[key] === 'undefined') {
+			continue;
+		}
+		var validationFunctions = this.definedKeywords[key];
+		for (var i = 0; i < validationFunctions.length; i++) {
+			var func = validationFunctions[i];
+			var result = func(data, schema[key], schema, dataPointerPath);
+			if (typeof result === 'string' || typeof result === 'number') {
+				return this.createError(ErrorCodes.KEYWORD_CUSTOM, {key: key, message: result}).prefixWith(null, "format");
+			} else if (result && typeof result === 'object') {
+				var code = result.code;
+				if (typeof code === 'string') {
+					if (!ErrorCodes[code]) {
+						throw new Error('Undefined error code (use defineError): ' + code);
+					}
+					code = ErrorCodes[code];
+				} else if (typeof code !== 'number') {
+					code = ErrorCodes.KEYWORD_CUSTOM;
+				}
+				var messageParams = (typeof result.message === 'object') ? result.message : {key: key, message: result.message || "?"};
+				var schemaPath = result.schemaPath ||( "/" + key.replace(/~/g, '~0').replace(/\//g, '~1'));
+				return this.createError(code, messageParams, result.dataPath || null, schemaPath);
+			}
+		}
+	}
+	return null;
+};
+
+function recursiveCompare(A, B) {
+	if (A === B) {
+		return true;
+	}
+	if (A && B && typeof A === "object" && typeof B === "object") {
+		if (Array.isArray(A) !== Array.isArray(B)) {
+			return false;
+		} else if (Array.isArray(A)) {
+			if (A.length !== B.length) {
+				return false;
+			}
+			for (var i = 0; i < A.length; i++) {
+				if (!recursiveCompare(A[i], B[i])) {
+					return false;
+				}
+			}
+		} else {
+			var key;
+			for (key in A) {
+				if (B[key] === undefined && A[key] !== undefined) {
+					return false;
+				}
+			}
+			for (key in B) {
+				if (A[key] === undefined && B[key] !== undefined) {
+					return false;
+				}
+			}
+			for (key in A) {
+				if (!recursiveCompare(A[key], B[key])) {
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+	return false;
+}
+
+ValidatorContext.prototype.validateBasic = function validateBasic(data, schema, dataPointerPath) {
+	var error;
+	if (error = this.validateType(data, schema, dataPointerPath)) {
+		return error.prefixWith(null, "type");
+	}
+	if (error = this.validateEnum(data, schema, dataPointerPath)) {
+		return error.prefixWith(null, "type");
+	}
+	return null;
+};
+
+ValidatorContext.prototype.validateType = function validateType(data, schema) {
+	if (schema.type === undefined) {
+		return null;
+	}
+	var dataType = typeof data;
+	if (data === null) {
+		dataType = "null";
+	} else if (Array.isArray(data)) {
+		dataType = "array";
+	}
+	var allowedTypes = schema.type;
+	if (typeof allowedTypes !== "object") {
+		allowedTypes = [allowedTypes];
+	}
+
+	for (var i = 0; i < allowedTypes.length; i++) {
+		var type = allowedTypes[i];
+		if (type === dataType || (type === "integer" && dataType === "number" && (data % 1 === 0))) {
+			return null;
+		}
+	}
+	return this.createError(ErrorCodes.INVALID_TYPE, {type: dataType, expected: allowedTypes.join("/")});
+};
+
+ValidatorContext.prototype.validateEnum = function validateEnum(data, schema) {
+	if (schema["enum"] === undefined) {
+		return null;
+	}
+	for (var i = 0; i < schema["enum"].length; i++) {
+		var enumVal = schema["enum"][i];
+		if (recursiveCompare(data, enumVal)) {
+			return null;
+		}
+	}
+	return this.createError(ErrorCodes.ENUM_MISMATCH, {value: (typeof JSON !== 'undefined') ? JSON.stringify(data) : data});
+};
+
+ValidatorContext.prototype.validateNumeric = function validateNumeric(data, schema, dataPointerPath) {
+	return this.validateMultipleOf(data, schema, dataPointerPath)
+		|| this.validateMinMax(data, schema, dataPointerPath)
+		|| this.validateNaN(data, schema, dataPointerPath)
+		|| null;
+};
+
+var CLOSE_ENOUGH_LOW = Math.pow(2, -51);
+var CLOSE_ENOUGH_HIGH = 1 - CLOSE_ENOUGH_LOW;
+ValidatorContext.prototype.validateMultipleOf = function validateMultipleOf(data, schema) {
+	var multipleOf = schema.multipleOf || schema.divisibleBy;
+	if (multipleOf === undefined) {
+		return null;
+	}
+	if (typeof data === "number") {
+		var remainder = (data/multipleOf)%1;
+		if (remainder >= CLOSE_ENOUGH_LOW && remainder < CLOSE_ENOUGH_HIGH) {
+			return this.createError(ErrorCodes.NUMBER_MULTIPLE_OF, {value: data, multipleOf: multipleOf});
+		}
+	}
+	return null;
+};
+
+ValidatorContext.prototype.validateMinMax = function validateMinMax(data, schema) {
+	if (typeof data !== "number") {
+		return null;
+	}
+	if (schema.minimum !== undefined) {
+		if (data < schema.minimum) {
+			return this.createError(ErrorCodes.NUMBER_MINIMUM, {value: data, minimum: schema.minimum}).prefixWith(null, "minimum");
+		}
+		if (schema.exclusiveMinimum && data === schema.minimum) {
+			return this.createError(ErrorCodes.NUMBER_MINIMUM_EXCLUSIVE, {value: data, minimum: schema.minimum}).prefixWith(null, "exclusiveMinimum");
+		}
+	}
+	if (schema.maximum !== undefined) {
+		if (data > schema.maximum) {
+			return this.createError(ErrorCodes.NUMBER_MAXIMUM, {value: data, maximum: schema.maximum}).prefixWith(null, "maximum");
+		}
+		if (schema.exclusiveMaximum && data === schema.maximum) {
+			return this.createError(ErrorCodes.NUMBER_MAXIMUM_EXCLUSIVE, {value: data, maximum: schema.maximum}).prefixWith(null, "exclusiveMaximum");
+		}
+	}
+	return null;
+};
+
+ValidatorContext.prototype.validateNaN = function validateNaN(data) {
+	if (typeof data !== "number") {
+		return null;
+	}
+	if (isNaN(data) === true || data === Infinity || data === -Infinity) {
+		return this.createError(ErrorCodes.NUMBER_NOT_A_NUMBER, {value: data}).prefixWith(null, "type");
+	}
+	return null;
+};
+
+ValidatorContext.prototype.validateString = function validateString(data, schema, dataPointerPath) {
+	return this.validateStringLength(data, schema, dataPointerPath)
+		|| this.validateStringPattern(data, schema, dataPointerPath)
+		|| null;
+};
+
+ValidatorContext.prototype.validateStringLength = function validateStringLength(data, schema) {
+	if (typeof data !== "string") {
+		return null;
+	}
+	if (schema.minLength !== undefined) {
+		if (data.length < schema.minLength) {
+			return this.createError(ErrorCodes.STRING_LENGTH_SHORT, {length: data.length, minimum: schema.minLength}).prefixWith(null, "minLength");
+		}
+	}
+	if (schema.maxLength !== undefined) {
+		if (data.length > schema.maxLength) {
+			return this.createError(ErrorCodes.STRING_LENGTH_LONG, {length: data.length, maximum: schema.maxLength}).prefixWith(null, "maxLength");
+		}
+	}
+	return null;
+};
+
+ValidatorContext.prototype.validateStringPattern = function validateStringPattern(data, schema) {
+	if (typeof data !== "string" || schema.pattern === undefined) {
+		return null;
+	}
+	var regexp = new RegExp(schema.pattern);
+	if (!regexp.test(data)) {
+		return this.createError(ErrorCodes.STRING_PATTERN, {pattern: schema.pattern}).prefixWith(null, "pattern");
+	}
+	return null;
+};
+ValidatorContext.prototype.validateArray = function validateArray(data, schema, dataPointerPath) {
+	if (!Array.isArray(data)) {
+		return null;
+	}
+	return this.validateArrayLength(data, schema, dataPointerPath)
+		|| this.validateArrayUniqueItems(data, schema, dataPointerPath)
+		|| this.validateArrayItems(data, schema, dataPointerPath)
+		|| null;
+};
+
+ValidatorContext.prototype.validateArrayLength = function validateArrayLength(data, schema) {
+	var error;
+	if (schema.minItems !== undefined) {
+		if (data.length < schema.minItems) {
+			error = (this.createError(ErrorCodes.ARRAY_LENGTH_SHORT, {length: data.length, minimum: schema.minItems})).prefixWith(null, "minItems");
+			if (this.handleError(error)) {
+				return error;
+			}
+		}
+	}
+	if (schema.maxItems !== undefined) {
+		if (data.length > schema.maxItems) {
+			error = (this.createError(ErrorCodes.ARRAY_LENGTH_LONG, {length: data.length, maximum: schema.maxItems})).prefixWith(null, "maxItems");
+			if (this.handleError(error)) {
+				return error;
+			}
+		}
+	}
+	return null;
+};
+
+ValidatorContext.prototype.validateArrayUniqueItems = function validateArrayUniqueItems(data, schema) {
+	if (schema.uniqueItems) {
+		for (var i = 0; i < data.length; i++) {
+			for (var j = i + 1; j < data.length; j++) {
+				if (recursiveCompare(data[i], data[j])) {
+					var error = (this.createError(ErrorCodes.ARRAY_UNIQUE, {match1: i, match2: j})).prefixWith(null, "uniqueItems");
+					if (this.handleError(error)) {
+						return error;
+					}
+				}
+			}
+		}
+	}
+	return null;
+};
+
+ValidatorContext.prototype.validateArrayItems = function validateArrayItems(data, schema, dataPointerPath) {
+	if (schema.items === undefined) {
+		return null;
+	}
+	var error, i;
+	if (Array.isArray(schema.items)) {
+		for (i = 0; i < data.length; i++) {
+			if (i < schema.items.length) {
+				if (error = this.validateAll(data[i], schema.items[i], [i], ["items", i], dataPointerPath + "/" + i)) {
+					return error;
+				}
+			} else if (schema.additionalItems !== undefined) {
+				if (typeof schema.additionalItems === "boolean") {
+					if (!schema.additionalItems) {
+						error = (this.createError(ErrorCodes.ARRAY_ADDITIONAL_ITEMS, {})).prefixWith("" + i, "additionalItems");
+						if (this.handleError(error)) {
+							return error;
+						}
+					}
+				} else if (error = this.validateAll(data[i], schema.additionalItems, [i], ["additionalItems"], dataPointerPath + "/" + i)) {
+					return error;
+				}
+			}
+		}
+	} else {
+		for (i = 0; i < data.length; i++) {
+			if (error = this.validateAll(data[i], schema.items, [i], ["items"], dataPointerPath + "/" + i)) {
+				return error;
+			}
+		}
+	}
+	return null;
+};
+
+ValidatorContext.prototype.validateObject = function validateObject(data, schema, dataPointerPath) {
+	if (typeof data !== "object" || data === null || Array.isArray(data)) {
+		return null;
+	}
+	return this.validateObjectMinMaxProperties(data, schema, dataPointerPath)
+		|| this.validateObjectRequiredProperties(data, schema, dataPointerPath)
+		|| this.validateObjectProperties(data, schema, dataPointerPath)
+		|| this.validateObjectDependencies(data, schema, dataPointerPath)
+		|| null;
+};
+
+ValidatorContext.prototype.validateObjectMinMaxProperties = function validateObjectMinMaxProperties(data, schema) {
+	var keys = Object.keys(data);
+	var error;
+	if (schema.minProperties !== undefined) {
+		if (keys.length < schema.minProperties) {
+			error = this.createError(ErrorCodes.OBJECT_PROPERTIES_MINIMUM, {propertyCount: keys.length, minimum: schema.minProperties}).prefixWith(null, "minProperties");
+			if (this.handleError(error)) {
+				return error;
+			}
+		}
+	}
+	if (schema.maxProperties !== undefined) {
+		if (keys.length > schema.maxProperties) {
+			error = this.createError(ErrorCodes.OBJECT_PROPERTIES_MAXIMUM, {propertyCount: keys.length, maximum: schema.maxProperties}).prefixWith(null, "maxProperties");
+			if (this.handleError(error)) {
+				return error;
+			}
+		}
+	}
+	return null;
+};
+
+ValidatorContext.prototype.validateObjectRequiredProperties = function validateObjectRequiredProperties(data, schema) {
+	if (schema.required !== undefined) {
+		for (var i = 0; i < schema.required.length; i++) {
+			var key = schema.required[i];
+			if (data[key] === undefined) {
+				var error = this.createError(ErrorCodes.OBJECT_REQUIRED, {key: key}).prefixWith(null, "" + i).prefixWith(null, "required");
+				if (this.handleError(error)) {
+					return error;
+				}
+			}
+		}
+	}
+	return null;
+};
+
+ValidatorContext.prototype.validateObjectProperties = function validateObjectProperties(data, schema, dataPointerPath) {
+	var error;
+	for (var key in data) {
+		var keyPointerPath = dataPointerPath + "/" + key.replace(/~/g, '~0').replace(/\//g, '~1');
+		var foundMatch = false;
+		if (schema.properties !== undefined && schema.properties[key] !== undefined) {
+			foundMatch = true;
+			if (error = this.validateAll(data[key], schema.properties[key], [key], ["properties", key], keyPointerPath)) {
+				return error;
+			}
+		}
+		if (schema.patternProperties !== undefined) {
+			for (var patternKey in schema.patternProperties) {
+				var regexp = new RegExp(patternKey);
+				if (regexp.test(key)) {
+					foundMatch = true;
+					if (error = this.validateAll(data[key], schema.patternProperties[patternKey], [key], ["patternProperties", patternKey], keyPointerPath)) {
+						return error;
+					}
+				}
+			}
+		}
+		if (!foundMatch) {
+			if (schema.additionalProperties !== undefined) {
+				if (this.trackUnknownProperties) {
+					this.knownPropertyPaths[keyPointerPath] = true;
+					delete this.unknownPropertyPaths[keyPointerPath];
+				}
+				if (typeof schema.additionalProperties === "boolean") {
+					if (!schema.additionalProperties) {
+						error = this.createError(ErrorCodes.OBJECT_ADDITIONAL_PROPERTIES, {}).prefixWith(key, "additionalProperties");
+						if (this.handleError(error)) {
+							return error;
+						}
+					}
+				} else {
+					if (error = this.validateAll(data[key], schema.additionalProperties, [key], ["additionalProperties"], keyPointerPath)) {
+						return error;
+					}
+				}
+			} else if (this.trackUnknownProperties && !this.knownPropertyPaths[keyPointerPath]) {
+				this.unknownPropertyPaths[keyPointerPath] = true;
+			}
+		} else if (this.trackUnknownProperties) {
+			this.knownPropertyPaths[keyPointerPath] = true;
+			delete this.unknownPropertyPaths[keyPointerPath];
+		}
+	}
+	return null;
+};
+
+ValidatorContext.prototype.validateObjectDependencies = function validateObjectDependencies(data, schema, dataPointerPath) {
+	var error;
+	if (schema.dependencies !== undefined) {
+		for (var depKey in schema.dependencies) {
+			if (data[depKey] !== undefined) {
+				var dep = schema.dependencies[depKey];
+				if (typeof dep === "string") {
+					if (data[dep] === undefined) {
+						error = this.createError(ErrorCodes.OBJECT_DEPENDENCY_KEY, {key: depKey, missing: dep}).prefixWith(null, depKey).prefixWith(null, "dependencies");
+						if (this.handleError(error)) {
+							return error;
+						}
+					}
+				} else if (Array.isArray(dep)) {
+					for (var i = 0; i < dep.length; i++) {
+						var requiredKey = dep[i];
+						if (data[requiredKey] === undefined) {
+							error = this.createError(ErrorCodes.OBJECT_DEPENDENCY_KEY, {key: depKey, missing: requiredKey}).prefixWith(null, "" + i).prefixWith(null, depKey).prefixWith(null, "dependencies");
+							if (this.handleError(error)) {
+								return error;
+							}
+						}
+					}
+				} else {
+					if (error = this.validateAll(data, dep, [], ["dependencies", depKey], dataPointerPath)) {
+						return error;
+					}
+				}
+			}
+		}
+	}
+	return null;
+};
+
+ValidatorContext.prototype.validateCombinations = function validateCombinations(data, schema, dataPointerPath) {
+	return this.validateAllOf(data, schema, dataPointerPath)
+		|| this.validateAnyOf(data, schema, dataPointerPath)
+		|| this.validateOneOf(data, schema, dataPointerPath)
+		|| this.validateNot(data, schema, dataPointerPath)
+		|| null;
+};
+
+ValidatorContext.prototype.validateAllOf = function validateAllOf(data, schema, dataPointerPath) {
+	if (schema.allOf === undefined) {
+		return null;
+	}
+	var error;
+	for (var i = 0; i < schema.allOf.length; i++) {
+		var subSchema = schema.allOf[i];
+		if (error = this.validateAll(data, subSchema, [], ["allOf", i], dataPointerPath)) {
+			return error;
+		}
+	}
+	return null;
+};
+
+ValidatorContext.prototype.validateAnyOf = function validateAnyOf(data, schema, dataPointerPath) {
+	if (schema.anyOf === undefined) {
+		return null;
+	}
+	var errors = [];
+	var startErrorCount = this.errors.length;
+	var oldUnknownPropertyPaths, oldKnownPropertyPaths;
+	if (this.trackUnknownProperties) {
+		oldUnknownPropertyPaths = this.unknownPropertyPaths;
+		oldKnownPropertyPaths = this.knownPropertyPaths;
+	}
+	var errorAtEnd = true;
+	for (var i = 0; i < schema.anyOf.length; i++) {
+		if (this.trackUnknownProperties) {
+			this.unknownPropertyPaths = {};
+			this.knownPropertyPaths = {};
+		}
+		var subSchema = schema.anyOf[i];
+
+		var errorCount = this.errors.length;
+		var error = this.validateAll(data, subSchema, [], ["anyOf", i], dataPointerPath);
+
+		if (error === null && errorCount === this.errors.length) {
+			this.errors = this.errors.slice(0, startErrorCount);
+
+			if (this.trackUnknownProperties) {
+				for (var knownKey in this.knownPropertyPaths) {
+					oldKnownPropertyPaths[knownKey] = true;
+					delete oldUnknownPropertyPaths[knownKey];
+				}
+				for (var unknownKey in this.unknownPropertyPaths) {
+					if (!oldKnownPropertyPaths[unknownKey]) {
+						oldUnknownPropertyPaths[unknownKey] = true;
+					}
+				}
+				// We need to continue looping so we catch all the property definitions, but we don't want to return an error
+				errorAtEnd = false;
+				continue;
+			}
+
+			return null;
+		}
+		if (error) {
+			errors.push(error.prefixWith(null, "" + i).prefixWith(null, "anyOf"));
+		}
+	}
+	if (this.trackUnknownProperties) {
+		this.unknownPropertyPaths = oldUnknownPropertyPaths;
+		this.knownPropertyPaths = oldKnownPropertyPaths;
+	}
+	if (errorAtEnd) {
+		errors = errors.concat(this.errors.slice(startErrorCount));
+		this.errors = this.errors.slice(0, startErrorCount);
+		return this.createError(ErrorCodes.ANY_OF_MISSING, {}, "", "/anyOf", errors);
+	}
+};
+
+ValidatorContext.prototype.validateOneOf = function validateOneOf(data, schema, dataPointerPath) {
+	if (schema.oneOf === undefined) {
+		return null;
+	}
+	var validIndex = null;
+	var errors = [];
+	var startErrorCount = this.errors.length;
+	var oldUnknownPropertyPaths, oldKnownPropertyPaths;
+	if (this.trackUnknownProperties) {
+		oldUnknownPropertyPaths = this.unknownPropertyPaths;
+		oldKnownPropertyPaths = this.knownPropertyPaths;
+	}
+	for (var i = 0; i < schema.oneOf.length; i++) {
+		if (this.trackUnknownProperties) {
+			this.unknownPropertyPaths = {};
+			this.knownPropertyPaths = {};
+		}
+		var subSchema = schema.oneOf[i];
+
+		var errorCount = this.errors.length;
+		var error = this.validateAll(data, subSchema, [], ["oneOf", i], dataPointerPath);
+
+		if (error === null && errorCount === this.errors.length) {
+			if (validIndex === null) {
+				validIndex = i;
+			} else {
+				this.errors = this.errors.slice(0, startErrorCount);
+				return this.createError(ErrorCodes.ONE_OF_MULTIPLE, {index1: validIndex, index2: i}, "", "/oneOf");
+			}
+			if (this.trackUnknownProperties) {
+				for (var knownKey in this.knownPropertyPaths) {
+					oldKnownPropertyPaths[knownKey] = true;
+					delete oldUnknownPropertyPaths[knownKey];
+				}
+				for (var unknownKey in this.unknownPropertyPaths) {
+					if (!oldKnownPropertyPaths[unknownKey]) {
+						oldUnknownPropertyPaths[unknownKey] = true;
+					}
+				}
+			}
+		} else if (error) {
+			errors.push(error);
+		}
+	}
+	if (this.trackUnknownProperties) {
+		this.unknownPropertyPaths = oldUnknownPropertyPaths;
+		this.knownPropertyPaths = oldKnownPropertyPaths;
+	}
+	if (validIndex === null) {
+		errors = errors.concat(this.errors.slice(startErrorCount));
+		this.errors = this.errors.slice(0, startErrorCount);
+		return this.createError(ErrorCodes.ONE_OF_MISSING, {}, "", "/oneOf", errors);
+	} else {
+		this.errors = this.errors.slice(0, startErrorCount);
+	}
+	return null;
+};
+
+ValidatorContext.prototype.validateNot = function validateNot(data, schema, dataPointerPath) {
+	if (schema.not === undefined) {
+		return null;
+	}
+	var oldErrorCount = this.errors.length;
+	var oldUnknownPropertyPaths, oldKnownPropertyPaths;
+	if (this.trackUnknownProperties) {
+		oldUnknownPropertyPaths = this.unknownPropertyPaths;
+		oldKnownPropertyPaths = this.knownPropertyPaths;
+		this.unknownPropertyPaths = {};
+		this.knownPropertyPaths = {};
+	}
+	var error = this.validateAll(data, schema.not, null, null, dataPointerPath);
+	var notErrors = this.errors.slice(oldErrorCount);
+	this.errors = this.errors.slice(0, oldErrorCount);
+	if (this.trackUnknownProperties) {
+		this.unknownPropertyPaths = oldUnknownPropertyPaths;
+		this.knownPropertyPaths = oldKnownPropertyPaths;
+	}
+	if (error === null && notErrors.length === 0) {
+		return this.createError(ErrorCodes.NOT_PASSED, {}, "", "/not");
+	}
+	return null;
+};
+
+ValidatorContext.prototype.validateHypermedia = function validateCombinations(data, schema, dataPointerPath) {
+	if (!schema.links) {
+		return null;
+	}
+	var error;
+	for (var i = 0; i < schema.links.length; i++) {
+		var ldo = schema.links[i];
+		if (ldo.rel === "describedby") {
+			var template = new UriTemplate(ldo.href);
+			var allPresent = true;
+			for (var j = 0; j < template.varNames.length; j++) {
+				if (!(template.varNames[j] in data)) {
+					allPresent = false;
+					break;
+				}
+			}
+			if (allPresent) {
+				var schemaUrl = template.fillFromObject(data);
+				var subSchema = {"$ref": schemaUrl};
+				if (error = this.validateAll(data, subSchema, [], ["links", i], dataPointerPath)) {
+					return error;
+				}
+			}
+		}
+	}
+};
+
+// parseURI() and resolveUrl() are from https://gist.github.com/1088850
+//   -  released as public domain by author ("Yaffle") - see comments on gist
+
+function parseURI(url) {
+	var m = String(url).replace(/^\s+|\s+$/g, '').match(/^([^:\/?#]+:)?(\/\/(?:[^:@]*(?::[^:@]*)?@)?(([^:\/?#]*)(?::(\d*))?))?([^?#]*)(\?[^#]*)?(#[\s\S]*)?/);
+	// authority = '//' + user + ':' + pass '@' + hostname + ':' port
+	return (m ? {
+		href     : m[0] || '',
+		protocol : m[1] || '',
+		authority: m[2] || '',
+		host     : m[3] || '',
+		hostname : m[4] || '',
+		port     : m[5] || '',
+		pathname : m[6] || '',
+		search   : m[7] || '',
+		hash     : m[8] || ''
+	} : null);
+}
+
+function resolveUrl(base, href) {// RFC 3986
+
+	function removeDotSegments(input) {
+		var output = [];
+		input.replace(/^(\.\.?(\/|$))+/, '')
+			.replace(/\/(\.(\/|$))+/g, '/')
+			.replace(/\/\.\.$/, '/../')
+			.replace(/\/?[^\/]*/g, function (p) {
+				if (p === '/..') {
+					output.pop();
+				} else {
+					output.push(p);
+				}
+		});
+		return output.join('').replace(/^\//, input.charAt(0) === '/' ? '/' : '');
+	}
+
+	href = parseURI(href || '');
+	base = parseURI(base || '');
+
+	return !href || !base ? null : (href.protocol || base.protocol) +
+		(href.protocol || href.authority ? href.authority : base.authority) +
+		removeDotSegments(href.protocol || href.authority || href.pathname.charAt(0) === '/' ? href.pathname : (href.pathname ? ((base.authority && !base.pathname ? '/' : '') + base.pathname.slice(0, base.pathname.lastIndexOf('/') + 1) + href.pathname) : base.pathname)) +
+		(href.protocol || href.authority || href.pathname ? href.search : (href.search || base.search)) +
+		href.hash;
+}
+
+function getDocumentUri(uri) {
+	return uri.split('#')[0];
+}
+function normSchema(schema, baseUri) {
+	if (schema && typeof schema === "object") {
+		if (baseUri === undefined) {
+			baseUri = schema.id;
+		} else if (typeof schema.id === "string") {
+			baseUri = resolveUrl(baseUri, schema.id);
+			schema.id = baseUri;
+		}
+		if (Array.isArray(schema)) {
+			for (var i = 0; i < schema.length; i++) {
+				normSchema(schema[i], baseUri);
+			}
+		} else {
+			if (typeof schema['$ref'] === "string") {
+				schema['$ref'] = resolveUrl(baseUri, schema['$ref']);
+			}
+			for (var key in schema) {
+				if (key !== "enum") {
+					normSchema(schema[key], baseUri);
+				}
+			}
+		}
+	}
+}
+
+var ErrorCodes = {
+	INVALID_TYPE: 0,
+	ENUM_MISMATCH: 1,
+	ANY_OF_MISSING: 10,
+	ONE_OF_MISSING: 11,
+	ONE_OF_MULTIPLE: 12,
+	NOT_PASSED: 13,
+	// Numeric errors
+	NUMBER_MULTIPLE_OF: 100,
+	NUMBER_MINIMUM: 101,
+	NUMBER_MINIMUM_EXCLUSIVE: 102,
+	NUMBER_MAXIMUM: 103,
+	NUMBER_MAXIMUM_EXCLUSIVE: 104,
+	NUMBER_NOT_A_NUMBER: 105,
+	// String errors
+	STRING_LENGTH_SHORT: 200,
+	STRING_LENGTH_LONG: 201,
+	STRING_PATTERN: 202,
+	// Object errors
+	OBJECT_PROPERTIES_MINIMUM: 300,
+	OBJECT_PROPERTIES_MAXIMUM: 301,
+	OBJECT_REQUIRED: 302,
+	OBJECT_ADDITIONAL_PROPERTIES: 303,
+	OBJECT_DEPENDENCY_KEY: 304,
+	// Array errors
+	ARRAY_LENGTH_SHORT: 400,
+	ARRAY_LENGTH_LONG: 401,
+	ARRAY_UNIQUE: 402,
+	ARRAY_ADDITIONAL_ITEMS: 403,
+	// Custom/user-defined errors
+	FORMAT_CUSTOM: 500,
+	KEYWORD_CUSTOM: 501,
+	// Schema structure
+	CIRCULAR_REFERENCE: 600,
+	// Non-standard validation options
+	UNKNOWN_PROPERTY: 1000
+};
+var ErrorCodeLookup = {};
+for (var key in ErrorCodes) {
+	ErrorCodeLookup[ErrorCodes[key]] = key;
+}
+var ErrorMessagesDefault = {
+	INVALID_TYPE: "Invalid type: {type} (expected {expected})",
+	ENUM_MISMATCH: "No enum match for: {value}",
+	ANY_OF_MISSING: "Data does not match any schemas from \"anyOf\"",
+	ONE_OF_MISSING: "Data does not match any schemas from \"oneOf\"",
+	ONE_OF_MULTIPLE: "Data is valid against more than one schema from \"oneOf\": indices {index1} and {index2}",
+	NOT_PASSED: "Data matches schema from \"not\"",
+	// Numeric errors
+	NUMBER_MULTIPLE_OF: "Value {value} is not a multiple of {multipleOf}",
+	NUMBER_MINIMUM: "Value {value} is less than minimum {minimum}",
+	NUMBER_MINIMUM_EXCLUSIVE: "Value {value} is equal to exclusive minimum {minimum}",
+	NUMBER_MAXIMUM: "Value {value} is greater than maximum {maximum}",
+	NUMBER_MAXIMUM_EXCLUSIVE: "Value {value} is equal to exclusive maximum {maximum}",
+	NUMBER_NOT_A_NUMBER: "Value {value} is not a valid number",
+	// String errors
+	STRING_LENGTH_SHORT: "String is too short ({length} chars), minimum {minimum}",
+	STRING_LENGTH_LONG: "String is too long ({length} chars), maximum {maximum}",
+	STRING_PATTERN: "String does not match pattern: {pattern}",
+	// Object errors
+	OBJECT_PROPERTIES_MINIMUM: "Too few properties defined ({propertyCount}), minimum {minimum}",
+	OBJECT_PROPERTIES_MAXIMUM: "Too many properties defined ({propertyCount}), maximum {maximum}",
+	OBJECT_REQUIRED: "Missing required property: {key}",
+	OBJECT_ADDITIONAL_PROPERTIES: "Additional properties not allowed",
+	OBJECT_DEPENDENCY_KEY: "Dependency failed - key must exist: {missing} (due to key: {key})",
+	// Array errors
+	ARRAY_LENGTH_SHORT: "Array is too short ({length}), minimum {minimum}",
+	ARRAY_LENGTH_LONG: "Array is too long ({length}), maximum {maximum}",
+	ARRAY_UNIQUE: "Array items are not unique (indices {match1} and {match2})",
+	ARRAY_ADDITIONAL_ITEMS: "Additional items not allowed",
+	// Format errors
+	FORMAT_CUSTOM: "Format validation failed ({message})",
+	KEYWORD_CUSTOM: "Keyword failed: {key} ({message})",
+	// Schema structure
+	CIRCULAR_REFERENCE: "Circular $refs: {urls}",
+	// Non-standard validation options
+	UNKNOWN_PROPERTY: "Unknown property (not in schema)"
+};
+
+function ValidationError(code, message, params, dataPath, schemaPath, subErrors) {
+	Error.call(this);
+	if (code === undefined) {
+		throw new Error ("No code supplied for error: "+ message);
+	}
+	this.message = message;
+	this.params = params;
+	this.code = code;
+	this.dataPath = dataPath || "";
+	this.schemaPath = schemaPath || "";
+	this.subErrors = subErrors || null;
+
+	var err = new Error(this.message);
+	this.stack = err.stack || err.stacktrace;
+	if (!this.stack) {
+		try {
+			throw err;
+		}
+		catch(err) {
+			this.stack = err.stack || err.stacktrace;
+		}
+	}
+}
+ValidationError.prototype = Object.create(Error.prototype);
+ValidationError.prototype.constructor = ValidationError;
+ValidationError.prototype.name = 'ValidationError';
+
+ValidationError.prototype.prefixWith = function (dataPrefix, schemaPrefix) {
+	if (dataPrefix !== null) {
+		dataPrefix = dataPrefix.replace(/~/g, "~0").replace(/\//g, "~1");
+		this.dataPath = "/" + dataPrefix + this.dataPath;
+	}
+	if (schemaPrefix !== null) {
+		schemaPrefix = schemaPrefix.replace(/~/g, "~0").replace(/\//g, "~1");
+		this.schemaPath = "/" + schemaPrefix + this.schemaPath;
+	}
+	if (this.subErrors !== null) {
+		for (var i = 0; i < this.subErrors.length; i++) {
+			this.subErrors[i].prefixWith(dataPrefix, schemaPrefix);
+		}
+	}
+	return this;
+};
+
+function isTrustedUrl(baseUrl, testUrl) {
+	if(testUrl.substring(0, baseUrl.length) === baseUrl){
+		var remainder = testUrl.substring(baseUrl.length);
+		if ((testUrl.length > 0 && testUrl.charAt(baseUrl.length - 1) === "/")
+			|| remainder.charAt(0) === "#"
+			|| remainder.charAt(0) === "?") {
+			return true;
+		}
+	}
+	return false;
+}
+
+var languages = {};
+function createApi(language) {
+	var globalContext = new ValidatorContext();
+	var currentLanguage = language || 'en';
+	var api = {
+		addFormat: function () {
+			globalContext.addFormat.apply(globalContext, arguments);
+		},
+		language: function (code) {
+			if (!code) {
+				return currentLanguage;
+			}
+			if (!languages[code]) {
+				code = code.split('-')[0]; // fall back to base language
+			}
+			if (languages[code]) {
+				currentLanguage = code;
+				return code; // so you can tell if fall-back has happened
+			}
+			return false;
+		},
+		addLanguage: function (code, messageMap) {
+			var key;
+			for (key in ErrorCodes) {
+				if (messageMap[key] && !messageMap[ErrorCodes[key]]) {
+					messageMap[ErrorCodes[key]] = messageMap[key];
+				}
+			}
+			var rootCode = code.split('-')[0];
+			if (!languages[rootCode]) { // use for base language if not yet defined
+				languages[code] = messageMap;
+				languages[rootCode] = messageMap;
+			} else {
+				languages[code] = Object.create(languages[rootCode]);
+				for (key in messageMap) {
+					if (typeof languages[rootCode][key] === 'undefined') {
+						languages[rootCode][key] = messageMap[key];
+					}
+					languages[code][key] = messageMap[key];
+				}
+			}
+			return this;
+		},
+		freshApi: function (language) {
+			var result = createApi();
+			if (language) {
+				result.language(language);
+			}
+			return result;
+		},
+		validate: function (data, schema, checkRecursive, banUnknownProperties) {
+			var context = new ValidatorContext(globalContext, false, languages[currentLanguage], checkRecursive, banUnknownProperties);
+			if (typeof schema === "string") {
+				schema = {"$ref": schema};
+			}
+			context.addSchema("", schema);
+			var error = context.validateAll(data, schema, null, null, "");
+			if (!error && banUnknownProperties) {
+				error = context.banUnknownProperties();
+			}
+			this.error = error;
+			this.missing = context.missing;
+			this.valid = (error === null);
+			return this.valid;
+		},
+		validateResult: function () {
+			var result = {};
+			this.validate.apply(result, arguments);
+			return result;
+		},
+		validateMultiple: function (data, schema, checkRecursive, banUnknownProperties) {
+			var context = new ValidatorContext(globalContext, true, languages[currentLanguage], checkRecursive, banUnknownProperties);
+			if (typeof schema === "string") {
+				schema = {"$ref": schema};
+			}
+			context.addSchema("", schema);
+			context.validateAll(data, schema, null, null, "");
+			if (banUnknownProperties) {
+				context.banUnknownProperties();
+			}
+			var result = {};
+			result.errors = context.errors;
+			result.missing = context.missing;
+			result.valid = (result.errors.length === 0);
+			return result;
+		},
+		addSchema: function () {
+			return globalContext.addSchema.apply(globalContext, arguments);
+		},
+		getSchema: function () {
+			return globalContext.getSchema.apply(globalContext, arguments);
+		},
+		getSchemaMap: function () {
+			return globalContext.getSchemaMap.apply(globalContext, arguments);
+		},
+		getSchemaUris: function () {
+			return globalContext.getSchemaUris.apply(globalContext, arguments);
+		},
+		getMissingUris: function () {
+			return globalContext.getMissingUris.apply(globalContext, arguments);
+		},
+		dropSchemas: function () {
+			globalContext.dropSchemas.apply(globalContext, arguments);
+		},
+		defineKeyword: function () {
+			globalContext.defineKeyword.apply(globalContext, arguments);
+		},
+		defineError: function (codeName, codeNumber, defaultMessage) {
+			if (typeof codeName !== 'string' || !/^[A-Z]+(_[A-Z]+)*$/.test(codeName)) {
+				throw new Error('Code name must be a string in UPPER_CASE_WITH_UNDERSCORES');
+			}
+			if (typeof codeNumber !== 'number' || codeNumber%1 !== 0 || codeNumber < 10000) {
+				throw new Error('Code number must be an integer > 10000');
+			}
+			if (typeof ErrorCodes[codeName] !== 'undefined') {
+				throw new Error('Error already defined: ' + codeName + ' as ' + ErrorCodes[codeName]);
+			}
+			if (typeof ErrorCodeLookup[codeNumber] !== 'undefined') {
+				throw new Error('Error code already used: ' + ErrorCodeLookup[codeNumber] + ' as ' + codeNumber);
+			}
+			ErrorCodes[codeName] = codeNumber;
+			ErrorCodeLookup[codeNumber] = codeName;
+			ErrorMessagesDefault[codeName] = ErrorMessagesDefault[codeNumber] = defaultMessage;
+			for (var langCode in languages) {
+				var language = languages[langCode];
+				if (language[codeName]) {
+					language[codeNumber] = language[codeNumber] || language[codeName];
+				}
+			}
+		},
+		reset: function () {
+			globalContext.reset();
+			this.error = null;
+			this.missing = [];
+			this.valid = true;
+		},
+		missing: [],
+		error: null,
+		valid: true,
+		normSchema: normSchema,
+		resolveUrl: resolveUrl,
+		getDocumentUri: getDocumentUri,
+		errorCodes: ErrorCodes
+	};
+	return api;
+}
+
+var tv4 = createApi();
+tv4.addLanguage('en-gb', ErrorMessagesDefault);
+
+//legacy property
+tv4.tv4 = tv4;
+
+return tv4; // used by _header.js to globalise.
+
+}));
+},{}],29:[function(require,module,exports){
+'use strict';
+var angular = require('angular');
+
+// Angular modules
+require('formula');
+require('angular-route');
+require('angular-npolar');
+
+var AutoConfig = require('npdc-common').AutoConfig;
+
+var npdcProjectApp = angular.module('npdcProjectApp', ['ngRoute', 'formula', 'npolarApi', 'npolarUi', 'templates']);
+
+// Bootstrap ngResource models using NpolarApiResource
+var resources = [
+  {'path': '/user', 'resource': 'User'},
+  {'path': '/project', 'resource': 'Project' }
+];
+
+resources.forEach(function (service) {
+  // Expressive DI syntax is needed here
+  npdcProjectApp.factory(service.resource, ['NpolarApiResource', function (NpolarApiResource) {
+    return NpolarApiResource.resource(service);
+  }]);
+});
+
+// Routing
+npdcProjectApp.config(require('./router'));
+
+// Auth interceptor
+npdcProjectApp.config(["$httpProvider", function ($httpProvider) {
+  $httpProvider.interceptors.push('npolarApiAuthInterceptor');
+}]);
+
+// Controllers
+npdcProjectApp.controller('ProjectShowController', require('./show/ProjectShowController'));
+npdcProjectApp.controller('ProjectSearchController', require('./search/ProjectSearchController'));
+npdcProjectApp.controller('ProjectEditController', require('./edit/ProjectEditController'));
+
+// Inject npolarApiConfig and run
+npdcProjectApp.run(["npolarApiConfig", function(npolarApiConfig) {
+  var environment = 'test'; // development | test | production
+  var autoconfig = new AutoConfig(environment);
+  angular.extend(npolarApiConfig, autoconfig);
+  console.log("npolarApiConfig", npolarApiConfig);
+}]);
+
+},{"./edit/ProjectEditController":30,"./router":31,"./search/ProjectSearchController":32,"./show/ProjectShowController":33,"angular":24,"angular-npolar":11,"angular-route":22,"formula":25,"npdc-common":27}],30:[function(require,module,exports){
+'use strict';
+/**
+ * @ngInject
+ */
+var ProjectEditController = function ($scope, $controller, $routeParams, Project) {
+
+  // EditController -> NpolarUiEditController
+  $controller('NpolarEditController', { $scope: $scope });
+
+  $scope.initFormula = function() {
+    // Inject schema and form(ula)
+    $scope.formula.schema = '//api.npolar.no/schema/project';
+    $scope.formula.form = 'edit/formula.json';
+    //$scope.formula.template = 'formula';
+  };
+
+  // Project -> npolarApiResource -> ngResource
+  $scope.resource = Project;
+  $scope.initFormula();
+
+  $scope.expert = function() {
+    $scope.formula.form = null;
+  };
+
+  $scope.isExpert = function() {
+    return ($scope.formula.form === null);
+  };
+
+  // edit (or new) action
+  $scope.edit();
+
+};
+ProjectEditController.$inject = ["$scope", "$controller", "$routeParams", "Project"];
+
+module.exports = ProjectEditController;
+
+},{}],31:[function(require,module,exports){
+'use strict';
+
+/**
+ * @ngInject
+ */
+var router = function ($routeProvider, $locationProvider) {
+
+  $locationProvider.html5Mode(true).hashPrefix('!');
+
+  $routeProvider.when('/:id', {
+    templateUrl: 'show/show.html',
+    controller: 'ProjectShowController',
+    breadcrumbs: [{'href': '/path'}]}
+   ).when('/:id/edit', {
+    templateUrl: 'edit/edit.html',
+    controller: 'ProjectEditController'
+  }).when('/', {
+    templateUrl: 'search/search.html',
+    controller: 'ProjectSearchController'
+  });
+};
+router.$inject = ["$routeProvider", "$locationProvider"];
+
+module.exports = router;
+
+},{}],32:[function(require,module,exports){
+'use strict';
+var angular = require('angular');
+/**
+ * @ngInject
+ */
+var ProjectSearchController = function ($scope, $location, $controller, Project) {
+
+  $controller('NpolarEditController', { $scope: $scope });
+  $scope.resource = Project;
+
+  $scope.query = function() {
+    var defaults = { limit: 999 };
+    var invariants = { fields: 'title,id,updated' };
+    return angular.extend(defaults, $location.search(), invariants);
+  };
+
+  $scope.isWriter = function() {
+    return angular.isDefined($scope.user.name);
+  };
+
+  $scope.search($scope.query());
+
+};
+ProjectSearchController.$inject = ["$scope", "$location", "$controller", "Project"];
+
+module.exports = DatasetSearchController;
+
+},{"angular":24}],33:[function(require,module,exports){
+'use strict';
+/**
+ * @ngInject
+ */
+var ProjectShowController = function ($scope, $controller, Project) {
+  $controller('NpolarBaseController', {$scope: $scope});
+  $scope.resource = Project;
+  $scope.show();
+};
+ProjectShowController.$inject = ["$scope", "$controller", "Project"];
+
+module.exports = ProjectShowController;
+
+},{}],34:[function(require,module,exports){
+'use strict'; module.exports = angular.module("templates", []).run(["$templateCache", function($templateCache) {$templateCache.put("edit/edit.html","<!-- formula css -->\n<link rel=\"stylesheet\" href=\"assets/formula/dist/formula.min.css\">\n<div ng-include=\"\'angular-npolar/ui/template/_head.html\'\"></div>\n\n<article>\n  <button ng-click=\"locationBase()\"class=\"btn btn-info\">cancel</button></a>\n  <button ng-if=\"!isExpert()\" ng-click=\"expert()\" class=\"btn btn-default\">expert</button>\n  <button ng-if=\"isExpert()\" ng-click=\"initFormula()\" class=\"btn btn-default\">simple</button>\n\n  <span ng-if=\"user.name\">\n    [delete]\n    <!--<button ng-if=\"document.id\" ng-click=\"delete()\" class=\"btn btn-danger\" ng-disabled=\"deleting || saving\">delete</button>-->\n    <button ng-if=\"document\" ng-click=\"save()\" class=\"btn btn-success\" ng-disabled=\"deleting || saving\">save</button>\n    <div ng-init=\"deleteClicked=false\" ng-if=\"deleteClicked\" ng-include=\"\'angular-npolar/ui/template/_delete.html\'\"></div>\n  </span>\n\n  <h3>{{ document._rev ? \'Editing\' : \'New\' }}<a ng-href=\"{{document.id}}\">{{document.title}}</a></h3>\n  <div formula=\"formula\"></div>\n</article>\n\n<div ng-include=\"\'angular-npolar/ui/template/_foot.html\'\"></div>");
+$templateCache.put("angular-npolar/ui/auth/_user.html","<div class=\"login-logout\">\n  <div ng-if=\"user.jwt\">\n    <button ng-click=\"logout()\">Logout</button> <a href=\"/user/account\">{{user.name}}</a>\n  </div>\n  <div ng-if=\"!user.jwt\">\n    \n    <form role=\"form\">\n      <section ng-show=\"loginClicked\" ng-init=\"loginClicked = false;\">\n      <div>\n        <label for=\"username\">Username</label>\n        <input type=\"text\" ng-model=\"user.username\" id=\"username\" placeholder=\"Username (email)\">\n      </div>\n      <div>\n        <label for=\"password\">Password</label>\n        <input type=\"password\" id=\"password\" ng-model=\"user.password\" placeholder=\"Password\">\n      </div>\n      <button id=\"login2\" type=\"submit\" ng-click=\"login()\">Login</button> <a href=\"/user/reset\">Forgot password?</a>\n      </section>\n      <section ng-show=\"!loginClicked\"><button id=\"login1\" type=\"submit\" ng-click=\"loginClicked = !loginClicked;\">Login</button> <a href=\"/user/register\">Register</a></section>\n    </form>\n  </div>\n</div>");
+$templateCache.put("search/search.html","<div class=\"pure-g\">\n  <div class=\"pure-u-1 pure-u-md-1-3\">\n    <div ng-include=\"\'angular-npolar/ui/template/_head.html\'\"></div>\n  </div>\n  <div class=\"pure-u-1 pure-u-md-1-3\">\n    <div ng-include=\"\'angular-npolar/ui/template/_search.html\'\"></div>\n  </div>\n  <div class=\"pure-u-1 pure-u-md-1-3\">\n    <div ng-include=\"\'angular-npolar/ui/template/_foot.html\'\"></div>\n  </div>\n</div>");
+$templateCache.put("angular-npolar/ui/navigation/_nav.html","\n <nav class=\"navbar top-menu\">\n        <div class=\"container-fluid\">\n          <!-- Small screen menu toggle -->\n          <div class=\"navbar-header\">\n            <button type=\"button\" class=\"navbar-toggle collapsed\" data-toggle=\"collapse\" data-target=\"#top-menu-collapse\">\n              <span class=\"sr-only\">Toggle navigation</span>\n              <span class=\"icon-bar\"></span>\n              <span class=\"icon-bar\"></span>\n              <span class=\"icon-bar\"></span>\n            </button>\n          </div>\n          <!-- Collect the nav links, forms, and other content for toggling -->\n          <div class=\"collapse navbar-collapse\" id=\"top-menu-collapse\" style=\"height: auto !important;\">\n            <ul class=\"nav navbar-nav menu\">\n              <li><a href=\"\">Norwegian polar data centre</a></li>\n              <li class=\"dropdown\">\n               <a href=\"#\" class=\"dropdown-toggle\" data-toggle=\"dropdown\" role=\"button\" aria-expanded=\"false\">\n                 <span class=\"glyphicon glyphicon-hdd\" aria-hidden=\"true\"></span> Data <span class=\"caret\"></span></a>\n               \n               \n               <ul class=\"dropdown-menu\" role=\"menu\">\n    <!-- ngRepeat: link in nav --><li ng-repeat=\"link in nav\" class=\"ng-scope\"><a href=\"/home\" title=\"Home\" class=\"ng-binding\">home</a></li><!-- end ngRepeat: link in nav --><li ng-repeat=\"link in nav\" class=\"ng-scope\"><a href=\"/dataset\" title=\"Datasets\" class=\"ng-binding\">datasets</a></li><!-- end ngRepeat: link in nav --><li ng-repeat=\"link in nav\" class=\"ng-scope\"><a href=\"/publication\" title=\"Publications\" class=\"ng-binding\">publications</a></li><!-- end ngRepeat: link in nav --><li ng-repeat=\"link in nav\" class=\"ng-scope\"><a href=\"/projects\" title=\"Projects\" class=\"ng-binding\">projects</a></li><!-- end ngRepeat: link in nav --><li ng-repeat=\"link in nav\" class=\"ng-scope\"><a href=\"/people\" title=\"People\" class=\"ng-binding\">people</a></li><!-- end ngRepeat: link in nav --><li ng-repeat=\"link in nav\" class=\"ng-scope\"><a href=\"/geodata\" title=\"Geographic services and map data\" class=\"ng-binding\">geodata</a></li><!-- end ngRepeat: link in nav --><li ng-repeat=\"link in nav\" class=\"ng-scope\"><a href=\"/dashboard\" title=\"Dashboard\" class=\"ng-binding\">dashboard</a></li><!-- end ngRepeat: link in nav --><li ng-repeat=\"link in nav\" class=\"ng-scope\"><a href=\"/latest\" title=\"Latest of everything\" class=\"ng-binding\">latest</a></li><!-- end ngRepeat: link in nav --><li ng-repeat=\"link in nav\" class=\"ng-scope\"><a href=\"/indicator\" title=\"Long-term environmental monitoring indicators\" class=\"ng-binding\">indicators</a></li><!-- end ngRepeat: link in nav --><li ng-repeat=\"link in nav\" class=\"ng-scope\"><a href=\"/vessel\" title=\"Kjell-G. Kjær\'s Historic Vessel archive\" class=\"ng-binding\">vessel</a></li><!-- end ngRepeat: link in nav --><li ng-repeat=\"link in nav\" class=\"ng-scope\"><a href=\"/_login\" title=\"Sign in\" class=\"ng-binding\">login</a></li><!-- end ngRepeat: link in nav -->\n  </ul>\n               \n               <ul class=\"dropdown-menu\" role=\"menu\">\n                 <li><a href=\"https://data.npolar.no/datasets\">Datasets</a></li>\n                 <li><a href=\"https://data.npolar.no/biology/marine\">Marine biology</a></li>\n                 <li><a href=\"/hello\">People</a></li>\n                 <li><a href=\"https://data.npolar.no/projects\">Projects</a></li>\n                 <li><a href=\"https://data.npolar.no/publications\">Publications</a></li>\n                 \n                 \n                 \n               </ul>\n             </li>\n             <li><a href=\"https://data.npolar.no/geodata\"><span class=\"glyphicon glyphicon-map-marker\" aria-hidden=\"true\"></span> Map services</a></li>\n             <li><a href=\"http://api.npolar.no\"><span class=\"glyphicon glyphicon-console\" aria-hidden=\"true\"></span> Developer</a></li>\n            </ul>\n            <form class=\"navbar-form\" role=\"search\">\n              <div class=\"input-group\">\n                <input type=\"text\" class=\"form-control\" placeholder=\"Search for...\">\n                <span class=\"input-group-btn\">\n                  <button class=\"btn btn-default\" type=\"button\"><span class=\"glyphicon glyphicon-search\" aria-hidden=\"true\"></span></button>\n                </span>\n              </div><!-- /input-group -->\n            </form>\n            <ul class=\"nav navbar-nav navbar-right login\">\n              <li>\n                     \n               <a href=\"#\" class=\"navbar-link\" data-toggle=\"popover\" role=\"button\" aria-expanded=\"false\">\n                 <span class=\"glyphicon glyphicon-user\" aria-hidden=\"true\"></span> Login <span class=\"caret\"></span></a>\n               <a href=\"#\" class=\"navbar-link\" data-toggle=\"modal\" data-target=\"#login-modal\" role=\"button\" aria-expanded=\"false\">\n                 <span class=\"glyphicon glyphicon-user\" aria-hidden=\"true\"></span> Login</a>\n               <div class=\"popover-wrapper\">\n                 <div class=\"popover-content\">\n                   <form>\n                     <div class=\"form-group\">\n                       <label for=\"exampleInputEmail1\">Email address</label>\n                       <input type=\"email\" class=\"form-control\" id=\"exampleInputEmail1\" placeholder=\"Enter email\">\n                     </div>\n                     <div class=\"form-group\">\n                       <label for=\"exampleInputPassword1\">Password</label>\n                       <input type=\"password\" class=\"form-control\" id=\"exampleInputPassword1\" placeholder=\"Password\">\n                     </div>\n                     <button type=\"button\" class=\"btn btn-default do-login\">Submit</button>\n                    </form>\n                 </div>\n               </div>\n             </li>\n           </ul>\n          </div><!-- /.navbar-collapse -->\n        </div><!-- /.container-fluid -->\n      </nav>");
+$templateCache.put("show/show.html","<!--\n  <div ng-include=\"\'angular-npolar/ui/template/_head.html\'\"></div>\n-->\n<h3>{{document.title}}</h3>\n<a ng-if=\"document.id && isAuthenticated()\" ng-href=\"{{document.id}}/edit\"><button class=\"btn btn-danger\">edit</button></a>\n<button ng-click=\"locationBase()\" class=\"btn btn-default\">back</button></a>\n<div ng-repeat=\"(k,v) in document\">\n  <h4>{{k}}</h4>\n  <p>{{v|json}}</p>\n</div>\n\n<section ng-repeat=\"link in document.links\">\n  <a ng-href=\"{{link.href}}\">{{link.title}}</a>\n</section>");
+$templateCache.put("angular-npolar/ui/template/_delete.html","<div class=\"npolar-confirm-delete\">\n  <span>Really DELETE?</span>\n\n  <button type=\"button\" ng-click=\"deleteClicked=false && back()\" class=\"btn btn-default\">no</button>\n  <button type=\"button\" ng-click=\"delete()\" class=\"btn btn-danger\">yes</button>\n</div>\n");
+$templateCache.put("angular-npolar/ui/template/_error.html","<h2 ng-if=\"error\" class=\"alert alert-danger\" role=\"alert\"><strong>{{error.status}} {{error.statusText}}</strong> {{error.data}}</h2>");
+$templateCache.put("angular-npolar/ui/template/_foot.html","");
+$templateCache.put("angular-npolar/ui/template/_head.html","<div ng-if=\"error\" ng-include=\"\'angular-npolar/ui/template/_error.html\'\"></div>\n<div ng-if=\"info\" ng-include=\"\'angular-npolar/ui/template/_info.html\'\"></div>\n<!--<div ng-if=\"user\"  ng-include=\"\'angular-npolar/ui/template/_user.html\'\"></div>-->\n");
+$templateCache.put("angular-npolar/ui/template/_info.html","<h2 ng-if=\"info\" class=\"alert alert-success\"><strong>{{info.header}}</strong> {{info.message }}</h2>");
+$templateCache.put("angular-npolar/ui/template/_search.html","<div>\n  <span ng-if=\"!feed.entries\">Fetching data from {{base}}</span>\n  <span ng-if=\"feed.opensearch.totalResults > 0\">{{feed.opensearch.totalResults}} results from {{ base }}</span>\n  <span ng-if=\"feed.opensearch.totalResults == 0\">No results</span>\n</div>\n\n<h3><span ng-if=\"filters.length\">Filters: {{filters | json}}</span><span ng-if=\"filters.length\"><a ng-href=\"/vessel\">Remove filters</a></span></h3>\n\n<h2><a ng-if=\"user.name\" href=\"__new/edit\"><button type=\"button\" class=\"pure-button\">New</button></a></h2>\n\n<p>Filter: <input ng-model=\"entryfilter\"></p>\n\n<div ng-repeat=\"e in feed.entries | filter:entryfilter\">\n  <h4 class=\"\"><a ng-href=\"{{e.id}}\">{{ e.title || e.name || e.id }}</a> {{e.updated }}</h4>\n</div>\n");}]);
+
+},{}]},{},[29,34])
+
+
+//# sourceMappingURL=app.js.map
