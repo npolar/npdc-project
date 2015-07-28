@@ -1,5 +1,6 @@
 # The files that are not transferred to github
 ./node_modules
 ./dest
+./dest/*
 ./test
-bundle.js
+./bundle.js
