@@ -41797,7 +41797,7 @@ var ProjectSearchController = function ($scope, $location, $controller, Project)
 };
 ProjectSearchController.$inject = ["$scope", "$location", "$controller", "Project"];
 
-module.exports = DatasetSearchController;
+module.exports = ProjectSearchController;
 
 },{"angular":24}],33:[function(require,module,exports){
 'use strict';

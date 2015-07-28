@@ -22,4 +22,4 @@ var ProjectSearchController = function ($scope, $location, $controller, Project)
 
 };
 
-module.exports = DatasetSearchController;
+module.exports = ProjectSearchController;
