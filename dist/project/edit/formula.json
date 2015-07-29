@@ -1,29 +1,85 @@
 {
   "fieldsets": [
     {
-      "title": "Project",
+      "title": "Core",
       "fields": [
+        "title",
+        "acronym",
+        "summary",
+        "abstract",
         {
-          "id": "title"
-        },
-        "progress",
-        "draft",
-        "licences",
-        "released"
+        "id": "knowledge_gap_addressed",
+        "title": "knowledge gap addressed"
+      },
+       {
+        "id": "results_summary",
+        "title": "project results"
+      }
       ]
     },
     {
-      "title": "Texts",
+      "title": "Classification",
+      "fields": [
+        "type",
+        "topics",
+        "tags"
+      ]
+    },
+    {
+      "title": "Administration",
+      "fields": [
+        { "id": "start_date",
+          "title": "start date"
+        },
+        {  "id": "end_date",
+          "title": "end date"
+        },
+        "state",
+        "draft",
+        { "id": "np_project_no",
+          "title": "agresso project number"
+        },
+        { "id": "ris_id",
+          "title": "ris id"
+        },
+        "funding_sources"
+      ]
+    },
+    {
+      "title": "People",
       "fields": [
         {
-          "id": "summary",
-          "type": "textarea"
-        },
-        "rights",
-        "restrictions",
-        "quality",
-        "citation",
-        "comment"
+          "id": "people",
+          "fields":[
+             {"id":"last_name","title":"last name"},
+             {"id":"first_name","title":"first name"},
+             "email",
+             {"id":"profile_href", "title":"homepage"},
+             "organisation",
+             "role"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Organisations",
+      "fields": [
+        {
+          "id": "organisations",
+          "fields": [
+             { "id":"name", "title":"international name"},
+             { "id":"name_nb", "title": "norwegian name" },
+             { "id":"href", "title": "homepages"},
+             "role"
+          ]
+        }
+      ]
+    },
+    {
+      "title": "Coverage",
+      "fields": [
+        "coverage",
+        "placenames"
       ]
     },
     {
@@ -32,59 +88,6 @@
         {
           "id": "links"
         }
-      ]
-    },
-    {
-      "title": "Classification",
-      "fields": [
-        "sets",
-        {
-          "id": "topics"
-        },
-        "iso_topics",
-        "tags"
-      ]
-    },
-    {
-      "title": "Coverage",
-      "fields": [
-        "activity",
-        "coverage",
-        "placenames"
-      ]
-    },
-    {
-      "title": "People",
-      "fields": [
-        {
-          "id": "people"
-        }
-      ]
-    },
-    {
-      "title": "Organisations",
-      "fields": [
-        {
-          "id": "organisations"
-        }
-      ]
-    },
-    {
-      "title": "GCMD",
-      "fields": [
-        {
-          "id": "gcmd"
-        }
-      ]
-    },
-    {
-      "title": "Edits",
-      "fields": [
-        "created",
-        "created_by",
-        "updated",
-        "updated_by",
-        "changes"
       ]
     }
   ]
