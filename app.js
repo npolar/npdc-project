@@ -6,7 +6,9 @@ require('formula');
 require('angular-route');
 require('angular-npolar');
 
+console.log("1");
 var AutoConfig = require('npdc-common').AutoConfig;
+console.log("autoconfig1" + Autoconfig);
 
 var npdcProjectApp = angular.module('npdcProjectApp', ['ngRoute', 'formula', 'npolarApi', 'npolarUi', 'templates']);
 
@@ -40,6 +42,7 @@ npdcProjectApp.controller('ProjectEditController', require('./edit/ProjectEditCo
 npdcProjectApp.run(function(npolarApiConfig) {
   var environment = 'test'; // development | test | production
   var autoconfig = new AutoConfig(environment);
+  console.log("autoconfig" + autoconfig);
   angular.extend(npolarApiConfig, autoconfig);
-  console.log("npolarApiConfig", npolarApiConfig);
+  console.log("npolarApiConfig --", npolarApiConfig);
 });
