@@ -5,8 +5,14 @@
       "fields": [
         "title",
         "acronym",
-        "summary",
-        "abstract",
+        {
+        "id": "summary",
+        "title": "non-scientific summary"
+        },
+        {
+        "id": "abstract",
+        "title": "scientific abstract"
+        },
         {
         "id": "knowledge_gap_addressed",
         "title": "knowledge gap addressed"
@@ -85,9 +91,12 @@
     {
       "title": "Links",
       "fields": [
-        {
-          "id": "links"
-        }
+        { "id": "rel", "title":"type of Links"},
+        { "id": "href", "title": "link address"},
+        {"id": "title", "title": "link title"},
+        {"id": "hreflang", "title": "language"},
+        {"id": "type", "title": "link type"}
+
       ]
     }
   ]
