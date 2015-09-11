@@ -25,16 +25,25 @@
     "gulp": "^3.9.0",
     "gulp-debug": "^2.0.1",
     "httpserver": "^0.2.0",
-    "npdc-gulp": "git://github.com/npolar/npdc-gulp.git",
+    "npdc-gulp": "npolar/npdc-gulp",
     "should": "^7.0.2"
   },
   "dependencies": {
-    "angular": "^1.4.3",
-    "angular-npolar": "git://github.com/npolar/angular-npolar.git",
-    "angular-route": "^1.4.3",
-    "formula": "git://github.com/npolar/formula.git",
+    "angular": "^1.4.5",
+    "angular-npolar": "npolar/angular-npolar",
+    "angular-route": "^1.4.5",
+    "formula": "npolar/formula",
     "lodash": "^3.10.0",
-    "tv4": "^1.1.12",
-    "npdc-common": "git://github.com/npolar/npdc-common.git"
+    "npdc-common": "npolar/npdc-common",
+    "babelify": "*",
+    "browserify-ngannotate": "*",
+    "partialify": "*"
+  },
+  "browserify": {
+    "transform": [
+      "babelify",
+      "partialify",
+      "browserify-ngannotate"
+    ]
   }
 }

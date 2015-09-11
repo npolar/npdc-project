@@ -8,7 +8,7 @@ require('angular-npolar');
 
 var AutoConfig = require('npdc-common').AutoConfig;
 
-var npdcProjectApp = angular.module('npdcProjectApp', ['ngRoute', 'formula', 'npolarApi', 'npolarUi', 'templates']);
+var npdcProjectApp = angular.module('npdcProjectApp', ['ngRoute', 'formula', 'npolarApi', 'npolarUi', 'npdcUi', 'templates']);
 
 // Bootstrap ngResource models using NpolarApiResource
 var resources = [
@@ -28,7 +28,7 @@ npdcProjectApp.config(require('./router'));
 
 // Auth interceptor
 npdcProjectApp.config(function ($httpProvider) {
-  $httpProvider.interceptors.push('npolarApiAuthInterceptor');
+  $httpProvider.interceptors.push('npolarApiInterceptor');
 });
 
 // Controllers
@@ -38,8 +38,8 @@ npdcProjectApp.controller('ProjectEditController', require('./edit/ProjectEditCo
 
 // Inject npolarApiConfig and run
 npdcProjectApp.run(function(npolarApiConfig) {
-  var environment = 'test'; // development | test | production
+  var environment = 'production'; // development | test | production
   var autoconfig = new AutoConfig(environment);
-  angular.extend(npolarApiConfig, autoconfig);
+  angular.extend(npolarApiConfig, autoconfig, { resources, formula : { template : 'material' } });
   console.log("npolarApiConfig", npolarApiConfig);
 });
