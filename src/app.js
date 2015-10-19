@@ -37,9 +37,11 @@ npdcProjectApp.controller('ProjectSearchController', require('./search/ProjectSe
 npdcProjectApp.controller('ProjectEditController', require('./edit/ProjectEditController'));
 
 // Inject npolarApiConfig and run
-npdcProjectApp.run(function(npolarApiConfig) {
+npdcProjectApp.run(function(npolarApiConfig, npdcAppConfig) {
   var environment = 'production'; // development | test | production
   var autoconfig = new AutoConfig(environment);
   angular.extend(npolarApiConfig, autoconfig, { resources, formula : { template : 'material' } });
   console.log("npolarApiConfig", npolarApiConfig);
+  npdcAppConfig.cardTitle = 'a';
+  npdcAppConfig.toolbarTitle = 'Projects';
 });

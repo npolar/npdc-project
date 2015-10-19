@@ -1,6 +1,6 @@
 
 <!DOCTYPE html>
-<html lang="en" ng-app="npdcProjectApp" ng-cloak>
+<html lang="en" ng-app="npdcProjectApp" ng-cloak ng-strict-di>
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -13,13 +13,7 @@
     <script>var VERSION = '<!-- @echo VERSION -->'; console.log("Running version:", VERSION)</script>
 </head>
 <body>
-  <div class="np-page-container">
-    <npdc:top class="np-header"></npdc:top>
-    <div class="np-content">
-      <npdc:crumbs></npdc:crumbs>
-      <div ng-view></div>
-    </div>
-  </div>
+  <npdc:app></npdc:app>
   <script src="app.js"></script>
 </body>
 </html>

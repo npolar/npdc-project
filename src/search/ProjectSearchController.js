@@ -1,24 +1,25 @@
 'use strict';
-var angular = require('angular');
-/**
- * @ngInject
- */
-var ProjectSearchController = function ($scope, $location, $controller, Project) {
+
+// @ngInject
+var ProjectSearchController = function ($scope, $location, $controller, Project, npdcAppConfig) {
 
   $controller('NpolarEditController', { $scope: $scope });
   $scope.resource = Project;
+  npdcAppConfig.cardTitle = 'Search results';
 
-  $scope.query = function() {
+  let query = function(params) {
     var defaults = { limit: 999 };
     var invariants = { fields: 'title,id,updated' };
-    return angular.extend(defaults, $location.search(), invariants);
+    return Object.assign(defaults, params, invariants);
   };
 
-  $scope.isWriter = function() {
-    return angular.isDefined($scope.user.name);
+  let search = function(q) {
+    return $scope.search(query(q)).$promise.then(data => {
+      npdcAppConfig.search.facets = data.feed.facets;
+    });
   };
 
-  $scope.search($scope.query());
+  search();
 
 };
 
