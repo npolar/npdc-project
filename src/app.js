@@ -42,6 +42,6 @@ npdcProjectApp.run(function(npolarApiConfig, npdcAppConfig) {
   var autoconfig = new AutoConfig(environment);
   angular.extend(npolarApiConfig, autoconfig, { resources, formula : { template : 'material' } });
   console.log("npolarApiConfig", npolarApiConfig);
-  npdcAppConfig.cardTitle = 'a';
+  npdcAppConfig.cardTitle = '';
   npdcAppConfig.toolbarTitle = 'Projects';
 });
