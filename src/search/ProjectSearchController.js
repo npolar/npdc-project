@@ -20,6 +20,7 @@ var ProjectSearchController = function ($scope, $location, $controller, Project,
   };
 
   search();
+  npdcAppConfig.cardTitle = 'Projects';
 
 };
 
