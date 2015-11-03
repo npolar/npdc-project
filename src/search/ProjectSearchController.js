@@ -5,22 +5,21 @@ var ProjectSearchController = function ($scope, $location, $controller, Project,
 
   $controller('NpolarEditController', { $scope: $scope });
   $scope.resource = Project;
-  npdcAppConfig.cardTitle = 'Search results';
-
-  let query = function(params) {
-    var defaults = { limit: 999 };
-    var invariants = { fields: 'title,id,updated' };
-    return Object.assign(defaults, params, invariants);
-  };
-
-  let search = function(q) {
-    return $scope.search(query(q)).$promise.then(data => {
-      npdcAppConfig.search.facets = data.feed.facets;
-    });
-  };
-
-  search();
   npdcAppConfig.cardTitle = 'Projects';
+
+  let defaults = { limit: 999, fields: 'id,title,updated' };
+  let invariants = $scope.security.isAuthenticated() ? {} : { "not-draft": "yes", "not-progress": "planned" };
+  let query = Object.assign( {}, defaults, invariants);
+
+  let search = function (q) {
+    $scope.search(Object.assign({}, query, q));
+  };
+
+  search(query);
+
+  $scope.$on('$locationChangeSuccess', (event, data) => {
+    search($location.search());
+  });
 
 };
 
