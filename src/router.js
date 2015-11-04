@@ -17,7 +17,7 @@ var router = function($routeProvider, $locationProvider) {
     template: '<npdc:formula></npdc:formula>',
     controller: 'ProjectEditController'
   }).when('/', {
-    template: '<npdc-search:input></npdc-search:input><npdc:search></npdc:search>',
+    template: '<npdc-search:input feed="feed"></npdc-search:input><npdc:search feed="feed"></npdc:search>',
     controller: 'ProjectSearchController'
   });
 };
