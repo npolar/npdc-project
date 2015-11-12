@@ -13,7 +13,9 @@ var npdcProjectApp = angular.module('npdcProjectApp', ['ngRoute', 'formula', 'np
 // Bootstrap ngResource models using NpolarApiResource
 var resources = [
   {'path': '/user', 'resource': 'User'},
-  {'path': '/project', 'resource': 'Project' }
+  {'path': '/project', 'resource': 'Project' },
+  {'path': '/dataset', 'resource': 'Dataset' },
+  {'path': '/publication', 'resource': 'Publication' }
 ];
 
 resources.forEach(function (service) {

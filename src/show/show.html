@@ -1,46 +1,65 @@
 <!DOCTYPE html>
 <npdc:edit-button class="np-primary-control"></npdc:edit-button>
+<npdc:loader ng-if="!document"></npdc:loader>
 
-<div class="np-padding">
+<div ng-if="document" class="np-padding">
 
   <npdc-document:meta></npdc-document:meta>
 
-  <h3>Abstract</h3>
-  <md-divider></md-divider>
+  <section>
+    <h3>Summary</h3>
+    <md-divider></md-divider>
 
-  <div class="layout-padding">
-    {{document.summary}}
-  </div>
+    <div marked="document.summary"></div>
+  </section>
+
+  <section ng-if="translate('summary', 'nb')">
+    <h3>Summary (norsk)</h3>
+    <md-divider></md-divider>
+
+    <div marked="translate('summary', 'nb')"></div>
+  </section>
+
+  <section>
+    <h3>Abstract</h3>
+    <md-divider></md-divider>
+
+    <div marked="document.abstract"></div>
+  </section>
+
+  <section ng-if="translate('abstract', 'nb')">
+    <h3>Abstract (norsk)</h3>
+    <md-divider></md-divider>
+
+    <div marked="translate('abstract', 'nb')"></div>
+  </section>
+
+  <section ng-if="document.knowledge_gap_addressed">
+    <h3>Knowledge gap addressed</h3>
+    <md-divider></md-divider>
+
+    <div>{{document.knowledge_gap_addressed}}</div>
+  </section>
 
   <npdc:persons></npdc:persons>
+  <npdc:organisations></npdc:organisations>
+  <npdc:placenames></npdc:placenames>
 
-  <h3>Organisations</h3>
-  <md-divider></md-divider>
+  <section>
+    <h3>Details</h3>
+    <md-divider></md-divider>
+    <dl>
+      <dt ng-if-start="document.ris_id">RIS ID</dt>
+      <dd ng-if-end>{{document.ris_id}}</dd>
+      <dt ng-if-start="document.state">State</dt>
+      <dd ng-if-end>{{document.state}}</dd>
+      <dt ng-if-start="document.start_date">Start Date</dt>
+      <dd ng-if-end>{{document.start_date}}</dd>
+      <dt ng-if-start="document.end_date">End Date</dt>
+      <dd ng-if-end>{{document.end_date}}</dd>
+    </dl>
+  </section>
 
-  <div ng-if="document.organisations" ng-repeat="o in document.organisations" class="layout-padding">
-    <md-icon>business</md-icon>&nbsp;<b>{{o.name}}</b>&nbsp;<em>[{{o.role}}]</em></br>
-  </div>
-
-  <h3>Details</h3>
-  <md-divider></md-divider>
-
-  <div class="layout-padding">
-    <section ng-if="document.ris_id">
-      <strong>RIS ID:&nbsp;</strong>
-      {{document.ris_id}}
-    </section>
-    <section ng-if="document.state">
-      <strong>State:&nbsp;</strong>
-      {{document.state}}
-    </section>
-    <section ng-if="document.start_date">
-      <strong>Start Date:&nbsp;</strong>
-      {{document.start_date}}
-    </section>
-    <section ng-if="document.end_date">
-      <strong>End Date:&nbsp;</strong>
-      {{document.end_date}}
-    </section>
-  </div>
+  <npdc:links links="document.links" related="related"></npdc:links>
 
 </div>
