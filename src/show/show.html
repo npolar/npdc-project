@@ -6,7 +6,7 @@
 
   <npdc-document:meta></npdc-document:meta>
 
-  <section>
+  <section ng-if="document.summary">
     <h3>Summary</h3>
     <md-divider></md-divider>
 
@@ -20,7 +20,7 @@
     <div marked="translate('summary', 'nb')"></div>
   </section>
 
-  <section>
+  <section ng-if="document.abstract">
     <h3>Abstract</h3>
     <md-divider></md-divider>
 
