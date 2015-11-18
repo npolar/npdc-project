@@ -29,7 +29,7 @@ var ProjectSearchController = function ($scope, $location, $controller, Project,
   search(query);
 
   $scope.$on('$locationChangeSuccess', (event, data) => {
-    search($location.search());
+    search();
   });
 
 };
