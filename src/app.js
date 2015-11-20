@@ -1,14 +1,9 @@
 'use strict';
 var angular = require('angular');
 
-// Angular modules
-require('formula');
-require('angular-route');
-require('angular-npolar');
-
 var AutoConfig = require('npdc-common').AutoConfig;
 
-var npdcProjectApp = angular.module('npdcProjectApp', ['ngRoute', 'formula', 'npolarApi', 'npolarUi', 'npdcUi', 'templates']);
+var npdcProjectApp = angular.module('npdcProjectApp', ['npdcUi']);
 
 // Bootstrap ngResource models using NpolarApiResource
 var resources = [
