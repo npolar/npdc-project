@@ -3,7 +3,7 @@ var angular = require('angular');
 
 var AutoConfig = require('npdc-common').AutoConfig;
 
-var npdcProjectApp = angular.module('npdcProjectApp', ['npdcUi']);
+var npdcProjectApp = angular.module('npdcProjectApp', ['npdcCommon']);
 
 // Bootstrap ngResource models using NpolarApiResource
 var resources = [
