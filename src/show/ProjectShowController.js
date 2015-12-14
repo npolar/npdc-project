@@ -38,7 +38,7 @@ var ProjectShowController = function ($scope, $controller, $q, Project, Dataset,
     }).$promise;
 
     $q.all([relatedDatasets, relatedPublications, relatedProjects]).then((related) => {
-      $scope.related = related.reduce((a, b) => a.concat(b), []).sort((a, b) => b._score - a._score);
+      $scope.related = related;
     });
   });
 };
