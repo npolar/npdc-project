@@ -57,12 +57,14 @@
         {
           "id": "people",
           "fields":[
+             {"id":"id", "hidden": true},
              {"id":"last_name","title":"last name"},
              {"id":"first_name","title":"first name"},
              "email",
              {"id":"profile_href", "title":"homepage"},
              "organisation",
-             "role"
+             "role",
+              {"id":"employee_no", "hidden": true}
           ]
         }
       ]
@@ -91,13 +93,17 @@
     {
       "title": "Links",
       "fields": [
-        { "id": "rel", "title":"type of Links"},
-        { "id": "href", "title": "link address"},
-        {"id": "title", "title": "link title"},
-        {"id": "hreflang", "title": "language"},
-        {"id": "type", "title": "link type"}
-
+       {
+          "id": "links",
+          "fields":[
+         {"id": "title", "title": "link title"},
+         { "id": "href", "title": "link"},
+         {"id": "rel", "title": "type of link"},
+         {"id": "hreflang", "hidden": true},
+         {"id": "type", "hidden": true}
       ]
+    }
+    ]
     }
   ]
 }
