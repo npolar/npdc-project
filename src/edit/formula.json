@@ -48,7 +48,17 @@
         { "id": "ris_id",
           "title": "ris id"
         },
-        "funding_sources"
+        {  "id": "funding_sources",
+          "title": "funding sources",
+          "fields": [
+          { "id": "organization_name",
+            "title": "organisation name"
+          },
+          {  "id": "aggresso_code",
+            "title": "aggresso code"
+          }
+        ]
+        }
       ]
     },
     {

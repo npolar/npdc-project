@@ -1,0 +1,23 @@
+{
+	"iso639-3": "eng",
+
+
+	"fields": {
+		"acronym": {
+			"title": "HeiPÅDeg"
+		},
+		"people": {
+			"title": "people2",
+			"description": "people2",
+			"fields": {
+				"role": {
+					"title": "role",
+					"values": [
+						"project leader",
+						"project participant"
+					]
+				}
+			}
+		}
+	}
+}

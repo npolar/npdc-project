@@ -11,6 +11,16 @@ var ProjectEditController = function ($scope, $controller, $routeParams, Project
     // Inject schema and form(ula)
     $scope.formula.schema = '//api.npolar.no/schema/project';
     $scope.formula.form = 'edit/formula.json';
+    $scope.formula.templates = [
+    {
+      match(field) { return field.id === "people_object"; },
+      template: '<npdc:formula-person></npdc:formula-person>'
+    } ,
+    {
+      match(field) { return field.id === "placenames_object"; },
+      template: '<npdc:formula-placename></npdc:formula-placename>'
+    }
+  ];
     //$scope.formula.template = 'formula';
   };
 
