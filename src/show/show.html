@@ -3,8 +3,15 @@
 <npdc:loader ng-if="!document"></npdc:loader>
 
 <div ng-if="document" class="np-padding">
+  
+  <!--<npdc:collection collection="project"></npdc:collection>
+  <span style="margin: 8px; padding-top: 4px;">
+    <md-icon>lock_open</md-icon>&nbsp;open data
+  </span>-->
+      
+  <h1 class="md-display-2">{{ document.title }}</h1>
 
-  <npdc-document:meta></npdc-document:meta>
+  
 
   <section ng-if="document.summary">
     <h3>Summary</h3>
@@ -61,5 +68,8 @@
   </section>
 
   <npdc:links links="document.links" related="related"></npdc:links>
+  
+  <npdc-document:meta></npdc-document:meta>
+  Updated by {{ document.updated_by}}
 
 </div>

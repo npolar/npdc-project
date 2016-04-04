@@ -11,16 +11,16 @@ var ProjectSearchController = function ($scope, $location, $controller, Project,
     return "Updated: " + e.updated.split('T')[0];
    };
 
-  npdcAppConfig.search.local.results.subtitle = "type";
+  npdcAppConfig.search.local.results.subitle = "ris_id";
   npdcAppConfig.search.local.filterUi = {
     'updated': {
       type: 'hidden'
     }
   };
 
-  let defaults = { limit: 999, fields: 'id,title,updated'};
-  let invariants = $scope.security.isAuthenticated() ? {} : { "not-draft": "yes", "not-progress": "planned" };
-  let query = Object.assign( {}, defaults, invariants);
+  let defaults = { limit: 999, fields: 'id,title,updated', facets:'draft', sort: '-updated' };
+  //let invariants = $scope.security.isAuthenticated() ? {} : { "not-draft": "yes", "not-progress": "planned" };
+  let query = Object.assign( {}, defaults);
 
   let search = function (q) {
     $scope.search(Object.assign({}, query, q));

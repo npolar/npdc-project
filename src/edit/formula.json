@@ -7,19 +7,23 @@
         "acronym",
         {
         "id": "summary",
-        "title": "non-scientific summary"
+        "title": "non-scientific summary",
+         "type": "textarea"
         },
         {
         "id": "abstract",
-        "title": "scientific abstract"
+        "title": "scientific abstract",
+         "type": "textarea"
         },
         {
         "id": "knowledge_gap_addressed",
-        "title": "knowledge gap addressed"
+        "title": "knowledge gap addressed",
+         "type": "textarea"
       },
        {
         "id": "results_summary",
-        "title": "project results"
+        "title": "project results",
+         "type": "textarea"
       }
       ]
     },
