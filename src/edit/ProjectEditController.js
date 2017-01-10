@@ -5,7 +5,7 @@ function ProjectEditController($scope, $controller, $routeParams,
   NpolarLang,
   npdcAppConfig,
   Project) {
-  
+
   'ngInject';
 
   $controller('NpolarEditController', { $scope: $scope });
@@ -13,7 +13,7 @@ function ProjectEditController($scope, $controller, $routeParams,
   function initFormula() {
     let tpl = [
       {
-        match(field) { return field.id === "people_object"; },
+        match(field) { return field.id === "people_item"; },
         template: '<npdc:formula-person></npdc:formula-person>'
       },
       {
@@ -21,9 +21,9 @@ function ProjectEditController($scope, $controller, $routeParams,
         template: '<npdc:formula-placename></npdc:formula-placename>'
       }
     ];
-    
+
     let languages = [];
-    
+
     $scope.formula = formula.getInstance({
       schema: '//api.npolar.no/schema/project',
       language: NpolarLang.getLang(),

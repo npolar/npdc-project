@@ -1,10 +1,11 @@
 'use strict';
-/**
- * @ngInject
- */
-var ProjectShowController = function ($scope, $controller, $q, Project, Dataset, Publication, npdcAppConfig) {
+
+function ProjectShowController($scope, $controller, $q, Project, ProjectModel, Dataset, Publication, npdcAppConfig) {
+  'ngInject';
+
   $controller('NpolarBaseController', {$scope: $scope});
   $scope.resource = Project;
+  $scope.model = ProjectModel;
 
   $scope.translate = function (field, lang) {
     let t = $scope.document.translations;
@@ -14,33 +15,8 @@ var ProjectShowController = function ($scope, $controller, $q, Project, Dataset,
     return false;
   };
 
-  $scope.show().$promise.then(project => {
-    npdcAppConfig.cardTitle = project.title || project._id;
+  $scope.show();
 
-    let relatedDatasets = Dataset.array({
-      q: project.title,
-      fields: 'id,title,collection',
-      score: true,
-      limit: 5
-    }).$promise;
-    let relatedPublications = Publication.array({
-      q: project.title,
-      fields: 'id,title,published_sort,collection',
-      score: true,
-      limit: 5
-    }).$promise;
-    let relatedProjects = Project.array({
-      q: project.title,
-      fields: 'id,title,collection',
-      score: true,
-      limit: 5,
-      'not-id': project.id
-    }).$promise;
-
-    $q.all([relatedDatasets, relatedPublications, relatedProjects]).then((related) => {
-      $scope.related = related;
-    });
-  });
-};
+}
 
 module.exports = ProjectShowController;

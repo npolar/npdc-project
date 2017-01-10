@@ -1,75 +1,123 @@
 <!DOCTYPE html>
+<span><md-icon>subdirectory_arrow_left</md-icon><a href=".">Project search</a></span>
 <npdc:edit-button class="np-primary-control"></npdc:edit-button>
 <npdc:loader ng-if="!document"></npdc:loader>
+<div ng-if="document" ng-init="p = document">
 
-<div ng-if="document" class="np-padding">
-  
-  <!--<npdc:collection collection="project"></npdc:collection>
-  <span style="margin: 8px; padding-top: 4px;">
-    <md-icon>lock_open</md-icon>&nbsp;open data
-  </span>-->
-      
-  <h1 class="md-display-2">{{ document.title }}</h1>
+  <md-card>
+    <md-card-content>
 
-  
+      <h1 class="md-display-2">{{ model.acronym_title(document) }}</h1>
 
-  <section ng-if="document.summary">
-    <h3>Summary</h3>
-    <md-divider></md-divider>
+      <h2 class="md-headline">
+       {{ p.state | t }} {{ p.type | lowercase | t }} {{ 'project' | t }} <span ng-if="model.led_by(p).length > 0">led by {{ model.led_by(p) }}</span>
+      </h2>
+      [{{ p.start_date | isodate }} — {{ p.end_date | isodate }}] <b ng-if="p.draft == 'yes'">draft</b>
+    </md-card-content>
+  </md-card>
 
-    <div marked="document.summary"></div>
-  </section>
+  <md-card>
+    <md-card-header>
+      <md-card-avatar>
+        <md-icon>text_fields</md-icon>
+      </md-card-avatar>
+      <md-card-header-text>
+        <span class="md-headline">{{ 'Summary' | t }}</span>
+        <span class="md-subhead">Overview for non-experts</span>
+      </md-card-header-text>
+    </md-card-header>
+    <md-card-content>
+      <section>
+        <p ng-if="p.summary" class="markdown" marked="p.summary"></p>
+        <p ng-if="!p.summary"><i>Missing</i></p>
 
-  <section ng-if="translate('summary', 'nb')">
-    <h3>Summary (norsk)</h3>
-    <md-divider></md-divider>
+        <p><span ng-if="translate('summary', 'nb')"><span class="markdown" marked="'Norsk sammendrag: '+translate('summary', 'nb')"></span></p>
+      </section>
+    </md-card-content>
+  </md-card>
 
-    <div marked="translate('summary', 'nb')"></div>
-  </section>
+  <md-card ng-if="p.abstract || translate('abstract', 'nb') || translate('abstract', 'no') || translate('abstract', 'nnn')">
+    <md-card-header>
+      <md-card-avatar>
+        <md-icon>text_fields</md-icon>
+      </md-card-avatar>
+      <md-card-header-text>
+        <span class="md-headline">{{'Abstract' | t}}</span>
+        <span class="md-subhead">Scientific abstract</span>
+      </md-card-header-text>
+    </md-card-header>
+    <md-card-content>
+      <section>
+        <p ng-if="p.abstract" class="markdown" marked="p.abstract"></p>
+        <p ng-if="!p.abstract"><i>Missing</i></p>
+        <p class="markdown" marked="translate('abstract', 'nb')"></p>
+      </section>
 
-  <section ng-if="document.abstract">
-    <h3>Abstract</h3>
-    <md-divider></md-divider>
 
-    <div marked="document.abstract"></div>
-  </section>
 
-  <section ng-if="translate('abstract', 'nb')">
-    <h3>Abstract (norsk)</h3>
-    <md-divider></md-divider>
+    </md-card-content>
+  </md-card>
 
-    <div marked="translate('abstract', 'nb')"></div>
-  </section>
-
-  <section ng-if="document.knowledge_gap_addressed">
-    <h3>Knowledge gap addressed</h3>
-    <md-divider></md-divider>
-
-    <div>{{document.knowledge_gap_addressed}}</div>
-  </section>
+    <md-card ng-if="results_summary || p.knowledge_gap_addressed ">
+    <md-card-header>
+      <md-card-avatar>
+        <md-icon>text_fields</md-icon>
+      </md-card-avatar>
+      <md-card-header-text>
+        <span class="md-headline">{{'Results' | t}}</span>
+      </md-card-header-text>
+    </md-card-header>
+    <md-card-content>
+      <p ng-if="p.knowledge_gap_addressed">Knowledge gap: {{p.knowledge_gap_addressed}}</p>
+      <p ng-if="p.results_summary">Results: {{p.results_summary}}</p>
+    </md-card-content>
+  </md-card>
 
   <npdc:persons></npdc:persons>
   <npdc:organisations></npdc:organisations>
   <npdc:placenames></npdc:placenames>
 
-  <section>
-    <h3>Details</h3>
-    <md-divider></md-divider>
-    <dl>
-      <dt ng-if-start="document.ris_id">RIS ID</dt>
-      <dd ng-if-end>{{document.ris_id}}</dd>
-      <dt ng-if-start="document.state">State</dt>
-      <dd ng-if-end>{{document.state}}</dd>
-      <dt ng-if-start="document.start_date">Start Date</dt>
-      <dd ng-if-end>{{document.start_date}}</dd>
-      <dt ng-if-start="document.end_date">End Date</dt>
-      <dd ng-if-end>{{document.end_date}}</dd>
-    </dl>
-  </section>
+  <md-card ng-if="true">
+    <md-card-header>
+      <md-card-avatar>
+        <md-icon>label_outline</md-icon>
+      </md-card-avatar>
+      <md-card-header-text>
+        <span class="md-headline">{{ 'Classification'|t }}</span>
+        <span class="md-subhead">Topics & tags</span>
+      </md-card-header-text>
+    </md-card-header>
+    <md-card-content>
 
-  <npdc:links links="document.links" related="related"></npdc:links>
-  
-  <npdc-document:meta></npdc-document:meta>
-  Updated by {{ document.updated_by}}
+          <dl>
+      <dt ng-if-start="p.ris_id">RIS ID</dt>
+      <dd ng-if-end><a ng-href="{{ model.risProjectUri(p.ris_id) }}">{{p.ris_id}}</a></dd>
+
+      {{ p.coverage |json }}
+      {{ p.placenames |json }}
+
+      <p>Show on npolar.no web:
+        <span ng-if="p.website == true"><a ng-href="http://www.npolar.no/en/projects/details?pid={{p.id}}">yes</a></span>
+        <span ng-if="!p.website || p.website != true">no</span>
+      </p>
+      </dd>
+
+      Tags: <span ng-repeat="tag in p.tags">
+        <a ng-href="?q=&filter-tags={{tag}}">{{ tag|t }}</a>{{!$last ? '':''}}
+      </span>
+
+      Topics: <span ng-repeat="topic in p.topics">
+        <a ng-href="?q=&filter-topics={{topic}}">{{ topic|t }}</a>{{!$last ? '':''}}
+      </span>
+
+    </dl>
+
+    </md-card-content>
+  </md-card>
+
+
+  <npdc:links links="p.links" related="related"></npdc:links>
+
+  <npdc:metadata document="document"></npdc:metadata>
 
 </div>

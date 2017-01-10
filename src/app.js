@@ -1,13 +1,10 @@
 'use strict';
-var angular = require('angular');
-
-var AutoConfig = require('npdc-common').AutoConfig;
-
-var npdcProjectApp = angular.module('npdcProjectApp', ['npdcCommon']);
+let angular = require('angular');
+let AutoConfig = require('npdc-common').AutoConfig;
+let npdcProjectApp = angular.module('npdcProjectApp', ['npdcCommon']);
 
 // Bootstrap ngResource models using NpolarApiResource
-var resources = [
-  {'path': '/user', 'resource': 'User'},
+let resources = [
   {'path': '/project', 'resource': 'Project' },
   {'path': '/dataset', 'resource': 'Dataset' },
   {'path': '/publication', 'resource': 'Publication' }
@@ -15,9 +12,8 @@ var resources = [
 
 resources.forEach(function (service) {
   // Expressive DI syntax is needed here
-  npdcProjectApp.factory(service.resource, ['NpolarApiResource', function (NpolarApiResource) {
-    return NpolarApiResource.resource(service);
-  }]);
+  npdcProjectApp.factory(service.resource, ['NpolarApiResource',
+    (NpolarApiResource) => NpolarApiResource.resource(service)]);
 });
 
 // Routing
@@ -28,17 +24,22 @@ npdcProjectApp.config(function ($httpProvider) {
   $httpProvider.interceptors.push('npolarApiInterceptor');
 });
 
+npdcProjectApp.service('ProjectModel', require('./ProjectModel'));
+
 // Controllers
 npdcProjectApp.controller('ProjectShowController', require('./show/ProjectShowController'));
 npdcProjectApp.controller('ProjectSearchController', require('./search/ProjectSearchController'));
 npdcProjectApp.controller('ProjectEditController', require('./edit/ProjectEditController'));
 
 // Inject npolarApiConfig and run
-npdcProjectApp.run(function(npolarApiConfig, npdcAppConfig) {
-  var environment = 'production'; // development | test | production
-  var autoconfig = new AutoConfig(environment);
-  angular.extend(npolarApiConfig, autoconfig, { resources, formula : { template : 'material' } });
+npdcProjectApp.run(function(npolarApiConfig, NpolarTranslate  ) {
+
+  let environment = 'production'; // development | test | production
+  let autoconfig = new AutoConfig(environment);
+
+  Object.assign(npolarApiConfig, autoconfig);
   console.log("npolarApiConfig", npolarApiConfig);
-  npdcAppConfig.cardTitle = '';
-  npdcAppConfig.toolbarTitle = 'Projects';
+
+  NpolarTranslate.loadBundles('npdc-project');
+
 });
