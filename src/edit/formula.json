@@ -1,10 +1,21 @@
-{
-  "fieldsets": [
-    {
-      "title": "Core",
+{ "fieldsets": [
+  { "title": "Project",
+    "fields": [
+      "title",
+      "acronym",
+      { "id": "start_date",
+        "title": "start date"
+      },
+      {  "id": "end_date",
+        "title": "end date"
+      },
+      "state"
+    ]
+  },
+        {
+      "title": "Texts",
       "fields": [
-        "title",
-        "acronym",
+
         {
         "id": "summary",
         "title": "non-scientific summary",
@@ -24,9 +35,21 @@
         "id": "results_summary",
         "title": "project results",
          "type": "textarea"
-      }
-      ]
-    },
+      },
+      {
+        "id": "translations",
+        "type": "object",
+        "properties": {
+          "id": "nb",
+          "type": "object",
+            "properties": {
+              "summary": { "type": "string"},
+              "abstract": {"type": "string"}
+
+            }
+        }
+      }]
+        },
     {
       "title": "Classification",
       "fields": [
@@ -38,13 +61,7 @@
     {
       "title": "Administration",
       "fields": [
-        { "id": "start_date",
-          "title": "start date"
-        },
-        {  "id": "end_date",
-          "title": "end date"
-        },
-        "state",
+
         "draft",
         { "id": "np_project_no",
           "title": "agresso project number"
