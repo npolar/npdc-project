@@ -1,6 +1,7 @@
 'use strict';
 
-function ProjectShowController($scope, $controller, $q, Project, ProjectModel, Dataset, Publication, npdcAppConfig) {
+function ProjectShowController($scope, $controller, $q,
+   NpdcWarningsService, Project, ProjectModel, ProjectWarningsService, Dataset, Publication, npdcAppConfig) {
   'ngInject';
 
   $controller('NpolarBaseController', {$scope: $scope});
@@ -15,7 +16,17 @@ function ProjectShowController($scope, $controller, $q, Project, ProjectModel, D
     return false;
   };
 
-  $scope.show();
+
+
+
+  this.showAction = () => {
+    $scope.show().$promise.then(project => {
+      NpdcWarningsService.warnings[project.id] = ProjectWarningsService.warnings(project);
+    });
+  };
+
+  this.showAction();
+
 
 }
 
