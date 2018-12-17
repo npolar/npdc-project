@@ -1,7 +1,11 @@
 'use strict';
 
+<<<<<<< Updated upstream
 function ProjectShowController($scope, $controller, $q,
    NpdcWarningsService, Project, ProjectModel, ProjectWarningsService, Dataset, Publication, npdcAppConfig) {
+=======
+function ProjectShowController($scope, $controller, $q, NpdcWarningsService, Project, ProjectModel, Dataset, Publication, npdcAppConfig) {
+>>>>>>> Stashed changes
   'ngInject';
 
   $controller('NpolarBaseController', {$scope: $scope});
@@ -17,11 +21,28 @@ function ProjectShowController($scope, $controller, $q,
   };
 
 
+<<<<<<< Updated upstream
 
 
   this.showAction = () => {
     $scope.show().$promise.then(project => {
       NpdcWarningsService.warnings[project.id] = ProjectWarningsService.warnings(project);
+    });
+  };
+
+  this.showAction();
+
+=======
+  $scope.show();
+>>>>>>> Stashed changes
+
+
+  this.showAction = () => {
+    $scope.show().$promise.then(project => {
+
+        NpdcWarningsService.warnings[project.id] = ProjectModel.warnings(project);
+        //NpdcWarningsService.notices[project.id] = DatasetModel.notices(dataset);
+
     });
   };
 

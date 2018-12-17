@@ -34,5 +34,6 @@ function ProjectModel(NpdcAPA) {
   this.led_by = (p) => {
     return NpdcAPA.apa_style_list( self.people_with_role(p, 'projectLeader').map(p => `${p.first_name} ${p.last_name}`) );
   };
+
 }
 module.exports = ProjectModel;
