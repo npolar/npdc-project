@@ -17,7 +17,7 @@ var ProjectSearchController = function ($scope, $location, $controller, Project,
     } else {
       return '';
     }
-  }
+  };
   npdcAppConfig.search.local.results.title = ProjectModel.acronym_title;
   npdcAppConfig.search.local.results.subtitle = 'state';
 

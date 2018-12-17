@@ -5,7 +5,7 @@ let npdcProjectApp = angular.module('npdcProjectApp', ['npdcCommon']);
 
 // Bootstrap ngResource models using NpolarApiResource
 let resources = [
-  {'path': '/project', 'resource': 'Project' },
+  {'path': '/project', 'resource': 'Project', base: 'https://api-test.data.npolar.no' },
   {'path': '/dataset', 'resource': 'Dataset' },
   {'path': '/publication', 'resource': 'Publication' }
 ];
@@ -24,15 +24,18 @@ npdcProjectApp.config(function ($httpProvider) {
   $httpProvider.interceptors.push('npolarApiInterceptor');
 });
 
-npdcProjectApp.service('ProjectModel', require('./ProjectModel'));
+npdcProjectApp.service('ProjectWarningsService', require('./model/ProjectWarningsService'));
+npdcProjectApp.service('ProjectModel', require('./model/ProjectModel'));
 
 // Controllers
 npdcProjectApp.controller('ProjectShowController', require('./show/ProjectShowController'));
 npdcProjectApp.controller('ProjectSearchController', require('./search/ProjectSearchController'));
 npdcProjectApp.controller('ProjectEditController', require('./edit/ProjectEditController'));
 
+
+
 // Inject npolarApiConfig and run
-npdcProjectApp.run(function(npolarApiConfig, NpolarTranslate  ) {
+npdcProjectApp.run(function(npolarApiConfig, NpolarTranslate) {
 
   let environment = 'production'; // development | test | production
   let autoconfig = new AutoConfig(environment);

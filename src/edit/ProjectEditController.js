@@ -4,7 +4,7 @@ function ProjectEditController($scope, $controller, $routeParams,
   formula,
   NpolarLang,
   npdcAppConfig,
-  Project) {
+  Project, ProjectModel, NpdcWarningsService, ProjectWarningsService) {
 
   'ngInject';
 
@@ -25,7 +25,7 @@ function ProjectEditController($scope, $controller, $routeParams,
     let languages = [];
 
     $scope.formula = formula.getInstance({
-      schema: '//api.npolar.no/schema/project',
+      schema: 'https://api.npolar.no/schema/project',
       language: NpolarLang.getLang(),
       form: 'edit/formula.json',
       templates: npdcAppConfig.formula.templates.concat(tpl),
@@ -38,7 +38,14 @@ function ProjectEditController($scope, $controller, $routeParams,
   initFormula();
 
   // edit (or new) action
-  $scope.edit();
+  this.editAction = () => {
+    $scope.edit().$promise.then(project => {
+    //  NpdcWarningsService.warnings[project.id] = ProjectWarningsService.warnings(project);
+    });
+  };
+
+  this.editAction();
+
 
 }
 

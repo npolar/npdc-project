@@ -1,5 +1,4 @@
 'use strict';
-
 function ProjectModel(NpdcAPA) {
   'ngInject';
 
@@ -10,8 +9,8 @@ function ProjectModel(NpdcAPA) {
   };
 
   this.acronym_title = (p, sep=': ') => {
-    if (!p) { return; };
-    return `${ p.acronym ? p.acronym+sep : '' }${p.title}`
+    if (!p) { return; }
+    return `${ p.acronym ? p.acronym+sep : '' }${p.title}`;
   };
 
   this.range = (p) => {
@@ -36,5 +35,5 @@ function ProjectModel(NpdcAPA) {
     return NpdcAPA.apa_style_list( self.people_with_role(p, 'projectLeader').map(p => `${p.first_name} ${p.last_name}`) );
   };
 
-};
+}
 module.exports = ProjectModel;
