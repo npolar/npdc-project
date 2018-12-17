@@ -20,7 +20,7 @@ const warnings = (project, w=[]) => {
   if (!project || !project._rev) {
     return [];
   }
-  
+
   let what;
   let min=50;
   let max=500;
@@ -33,7 +33,10 @@ const warnings = (project, w=[]) => {
 
     if (project.end_date) {
       if ('planned' === project.state && new Date(project.end_date) < new Date()) {
-        w.push("Planned project, but end date has passed");
+        w.push("Planned project, but end date is in the past");
+      }
+      if (!(['completed', 'cancelled'].includes(project.state)) && new Date(project.end_date) < new Date()) {
+        w.push("Project not set to completed or cancelled, even if end date is in the past");
       }
     }
     warnMinMax(w, project.summary, 'English summary for non-experts', min, max);
