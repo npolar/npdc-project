@@ -5,7 +5,7 @@ let npdcProjectApp = angular.module('npdcProjectApp', ['npdcCommon']);
 
 // Bootstrap ngResource models using NpolarApiResource
 let resources = [
-  {'path': '/project', 'resource': 'Project', base: 'https://api-test.data.npolar.no' },
+  {'path': '/project', 'resource': 'Project' },
   {'path': '/dataset', 'resource': 'Dataset' },
   {'path': '/publication', 'resource': 'Publication' }
 ];
